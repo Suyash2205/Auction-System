@@ -35,6 +35,10 @@ type Tournament = {
   teams: Team[];
 };
 
+const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
+const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
+const MAX_INSTANT_STATE_AGE_MS = 10_000;
+
 export function LiveDisplay() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [lot, setLot] = useState<Lot | null>(null);
@@ -58,7 +62,36 @@ export function LiveDisplay() {
     load();
 
     const interval = window.setInterval(load, 500);
-    const channel = supabase
+    const applyInstantState = (value: unknown) => {
+      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null };
+
+      if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
+
+      setTournament(data.tournament ?? null);
+      setLot(data.liveLot ?? null);
+    };
+
+    try {
+      const cached = window.localStorage.getItem(INSTANT_DISPLAY_KEY);
+      if (cached) applyInstantState(JSON.parse(cached));
+    } catch {
+      // Ignore malformed stale instant display state.
+    }
+
+    const instantChannel = new BroadcastChannel(INSTANT_DISPLAY_CHANNEL);
+    instantChannel.onmessage = (event) => applyInstantState(event.data);
+
+    const storageListener = (event: StorageEvent) => {
+      if (event.key !== INSTANT_DISPLAY_KEY || !event.newValue) return;
+      try {
+        applyInstantState(JSON.parse(event.newValue));
+      } catch {
+        // Ignore malformed storage payloads.
+      }
+    };
+
+    window.addEventListener("storage", storageListener);
+    const supabaseChannel = supabase
       ?.channel("live-auction-display")
       .on("postgres_changes", { event: "*", schema: "public", table: "AuctionLot" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "Bid" }, load)
@@ -67,8 +100,10 @@ export function LiveDisplay() {
 
     return () => {
       window.clearInterval(interval);
-      if (channel) {
-        supabase?.removeChannel(channel);
+      instantChannel.close();
+      window.removeEventListener("storage", storageListener);
+      if (supabaseChannel) {
+        supabase?.removeChannel(supabaseChannel);
       }
     };
   }, [load]);
