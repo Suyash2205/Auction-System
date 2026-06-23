@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum PlayerCategory {
+  M1
+  M2
+  M3
+  M4
+  F1
+}
+
+enum LotStatus {
+  QUEUED
+  LIVE
+  SOLD
+  UNSOLD
+  SKIPPED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      String   @default("ADMIN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Player {
+  id           String   @id @default(cuid())
+  name         String
+  phone        String
+  photoUrl     String?
+  experience   String
+  city         String?
+  dominantHand String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  entries      TournamentPlayer[]
+  lots         AuctionLot[]
+}
+
+model Tournament {
+  id           String   @id @default(cuid())
+  name         String
+  startsAt     DateTime?
+  teamKitty    Int      @default(90000)
+  bidIncrement Int      @default(1000)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  teams        Team[]
+  players      TournamentPlayer[]
+  lots         AuctionLot[]
+}
+
+model Team {
+  id           String   @id @default(cuid())
+  tournamentId String
+  name         String
+  ownerName    String
+  ownerPhone   String?
+  ownerEmail   String?
+  color        String?
+  budget       Int      @default(90000)
+  spent        Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  bids         Bid[]
+  soldLots     AuctionLot[] @relation("SoldTeam")
+}
+
+model TournamentPlayer {
+  id           String   @id @default(cuid())
+  tournamentId String
+  playerId     String
+  category     PlayerCategory
+  basePrice    Int
+  selectedAt   DateTime @default(now())
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  player       Player     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, playerId])
+}
+
+model AuctionLot {
+  id           String    @id @default(cuid())
+  tournamentId String
+  playerId     String
+  category     PlayerCategory
+  orderIndex   Int
+  status       LotStatus @default(QUEUED)
+  soldToTeamId String?
+  soldAmount   Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  player       Player     @relation(fields: [playerId], references: [id])
+  soldToTeam   Team?      @relation("SoldTeam", fields: [soldToTeamId], references: [id])
+  bids         Bid[]
+}
+
+model Bid {
+  id        String   @id @default(cuid())
+  lotId     String
+  teamId    String
+  amount    Int
+  createdAt DateTime @default(now())
+  lot       AuctionLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  team      Team       @relation(fields: [teamId], references: [id])
+}

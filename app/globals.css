@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f6fbf7;
+  color: #13231d;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.court-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.34) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.26) 1px, transparent 1px);
+  background-size: 52px 52px;
+}
+
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-court-blue focus:ring-offset-2;
+}
