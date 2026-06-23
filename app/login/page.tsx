@@ -11,6 +11,10 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    setNextPath(new URLSearchParams(window.location.search).get("next") || "/admin");
+  }, []);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
@@ -58,6 +62,3 @@ export default function LoginPage() {
     </main>
   );
 }
-  useEffect(() => {
-    setNextPath(new URLSearchParams(window.location.search).get("next") || "/admin");
-  }, []);
