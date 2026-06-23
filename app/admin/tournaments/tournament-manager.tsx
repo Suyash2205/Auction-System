@@ -54,6 +54,9 @@ export function TournamentManager() {
   const [error, setError] = useState("");
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<PlayerCategory>("M1");
+  const [isCreatingTournament, setIsCreatingTournament] = useState(false);
+  const [isAddingTeam, setIsAddingTeam] = useState(false);
+  const [isAddingPlayer, setIsAddingPlayer] = useState(false);
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -61,15 +64,25 @@ export function TournamentManager() {
   );
 
   async function load() {
-    const [playersResponse, tournamentsResponse] = await Promise.all([
-      fetch("/api/players"),
-      fetch("/api/admin/tournaments")
-    ]);
-    const playersData = await playersResponse.json();
-    const tournamentsData = await tournamentsResponse.json();
-    setPlayers(playersData.players ?? []);
-    setTournaments(tournamentsData.tournaments ?? []);
-    setSelectedTournamentId((current) => current || tournamentsData.tournaments?.[0]?.id || "");
+    try {
+      const [playersResponse, tournamentsResponse] = await Promise.all([
+        fetch("/api/players"),
+        fetch("/api/admin/tournaments")
+      ]);
+      const playersData = await playersResponse.json();
+      const tournamentsData = await tournamentsResponse.json();
+
+      if (!playersResponse.ok || !tournamentsResponse.ok) {
+        setError(playersData.error ?? tournamentsData.error ?? "Could not load setup data.");
+        return;
+      }
+
+      setPlayers(playersData.players ?? []);
+      setTournaments(tournamentsData.tournaments ?? []);
+      setSelectedTournamentId((current) => current || tournamentsData.tournaments?.[0]?.id || "");
+    } catch {
+      setError("Could not load setup data. Please refresh and try again.");
+    }
   }
 
   useEffect(() => {
@@ -80,72 +93,112 @@ export function TournamentManager() {
     event.preventDefault();
     setError("");
     setMessage("");
+    setIsCreatingTournament(true);
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/admin/tournaments", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: form.get("name"),
-        startsAt: form.get("startsAt"),
-        teamKitty: form.get("teamKitty"),
-        bidIncrement: form.get("bidIncrement")
-      })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Could not create tournament.");
-      return;
+    try {
+      const response = await fetch("/api/admin/tournaments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          startsAt: form.get("startsAt"),
+          teamKitty: form.get("teamKitty"),
+          bidIncrement: form.get("bidIncrement")
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error ?? "Could not create tournament.");
+        return;
+      }
+      setMessage("Tournament created. Now add teams.");
+      await load();
+      setSelectedTournamentId(data.tournament.id);
+      event.currentTarget.reset();
+    } catch {
+      setError("Could not create tournament. Please try again.");
+    } finally {
+      setIsCreatingTournament(false);
     }
-    setMessage("Tournament created.");
-    await load();
-    setSelectedTournamentId(data.tournament.id);
   }
 
   async function addTeam(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedTournament) return;
-    const form = new FormData(event.currentTarget);
-    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/teams`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: form.get("name"),
-        ownerName: form.get("ownerName"),
-        ownerPhone: form.get("ownerPhone"),
-        budget: form.get("budget") || selectedTournament.teamKitty,
-        color: colors[selectedTournament.teams.length % colors.length]
-      })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Could not add team.");
+    setError("");
+    setMessage("");
+    if (!selectedTournament) {
+      setError("Create and select a tournament before adding teams.");
       return;
     }
-    setMessage("Team added.");
-    await load();
-    event.currentTarget.reset();
+    setIsAddingTeam(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/teams`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          ownerName: form.get("ownerName"),
+          ownerPhone: form.get("ownerPhone"),
+          budget: form.get("budget") || selectedTournament.teamKitty,
+          color: colors[selectedTournament.teams.length % colors.length]
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error ?? "Could not add team.");
+        return;
+      }
+      setMessage("Team added. Add all teams before selecting players.");
+      await load();
+      event.currentTarget.reset();
+    } catch {
+      setError("Could not add team. Please try again.");
+    } finally {
+      setIsAddingTeam(false);
+    }
   }
 
   async function addPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedTournament || !selectedPlayerId) return;
-    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/players`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        playerId: selectedPlayerId,
-        category: selectedCategory,
-        basePrice: categoryConfig[selectedCategory].basePrice
-      })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Could not add player.");
+    setError("");
+    setMessage("");
+    if (!selectedTournament) {
+      setError("Create and select a tournament before adding players.");
       return;
     }
-    setMessage("Player added to tournament.");
-    setSelectedPlayerId("");
-    await load();
+    if (!selectedTournament.teams.length) {
+      setError("Add at least one team before adding players.");
+      return;
+    }
+    if (!selectedPlayerId) {
+      setError("Select a registered player before pressing Add.");
+      return;
+    }
+    setIsAddingPlayer(true);
+    try {
+      const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/players`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          playerId: selectedPlayerId,
+          category: selectedCategory,
+          basePrice: categoryConfig[selectedCategory].basePrice
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error ?? "Could not add player.");
+        return;
+      }
+      setMessage("Player added to tournament.");
+      setSelectedPlayerId("");
+      await load();
+    } catch {
+      setError("Could not add player. Please try again.");
+    } finally {
+      setIsAddingPlayer(false);
+    }
   }
 
   async function updateTournament() {
@@ -281,10 +334,12 @@ export function TournamentManager() {
               <input required name="name" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" placeholder="Tournament name" />
               <input type="date" name="startsAt" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
               <div className="grid grid-cols-2 gap-4">
-                <input name="teamKitty" defaultValue="90000" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
-                <input name="bidIncrement" defaultValue="1000" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
+                <input type="number" min="1" name="teamKitty" defaultValue="90000" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
+                <input type="number" min="1" name="bidIncrement" defaultValue="1000" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
               </div>
-              <button className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white">Create Tournament</button>
+              <button disabled={isCreatingTournament} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                {isCreatingTournament ? "Creating..." : "Create Tournament"}
+              </button>
             </div>
           </form>
 
@@ -307,6 +362,7 @@ export function TournamentManager() {
               onChange={(event) => setSelectedTournamentId(event.target.value)}
               className="focus-ring mt-4 w-full rounded-md border border-court-ink/15 px-4 py-3"
             >
+              {!tournaments.length ? <option value="">Create tournament first</option> : null}
               {tournaments.map((tournament) => (
                 <option key={tournament.id} value={tournament.id}>{tournament.name}</option>
               ))}
@@ -318,11 +374,12 @@ export function TournamentManager() {
             <div className="mt-5 grid gap-4">
               <input required name="name" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" placeholder="Team name" />
               <input required name="ownerName" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" placeholder="Owner name" />
-              <input name="ownerPhone" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" placeholder="Owner phone" />
-              <input name="budget" defaultValue={selectedTournament?.teamKitty ?? 90000} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3" />
-              <button disabled={!selectedTournament} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-4 py-3 text-sm font-semibold disabled:opacity-50">
-                <Plus size={17} /> Add Team
+              <input name="ownerPhone" disabled={!selectedTournament} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 disabled:bg-court-mint/30" placeholder="Owner phone" />
+              <input type="number" min="1" name="budget" disabled={!selectedTournament} defaultValue={selectedTournament?.teamKitty ?? 90000} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 disabled:bg-court-mint/30" />
+              <button disabled={!selectedTournament || isAddingTeam} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                <Plus size={17} /> {isAddingTeam ? "Adding..." : "Add Team"}
               </button>
+              {!selectedTournament ? <p className="text-sm font-semibold text-court-clay">Create a tournament first.</p> : null}
             </div>
           </form>
         </section>
@@ -356,19 +413,23 @@ export function TournamentManager() {
           <form onSubmit={addPlayer} className="rounded-lg border border-court-ink/10 bg-white p-5 shadow-sm">
             <h2 className="text-xl font-semibold">Add Registered Player</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_140px_auto]">
-              <select value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3">
-                <option value="">Select player</option>
+              <select disabled={!selectedTournament || !selectedTournament.teams.length} value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 disabled:bg-court-mint/30">
+                <option value="">{!selectedTournament ? "Create tournament first" : !selectedTournament.teams.length ? "Add team first" : "Select player"}</option>
                 {availablePlayers.map((player) => (
                   <option key={player.id} value={player.id}>{player.name} · {player.experience}</option>
                 ))}
               </select>
-              <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value as PlayerCategory)} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3">
+              <select disabled={!selectedTournament || !selectedTournament.teams.length} value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value as PlayerCategory)} className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 disabled:bg-court-mint/30">
                 {Object.keys(categoryConfig).map((category) => (
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>
-              <button className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white">Add</button>
+              <button disabled={!selectedTournament || !selectedTournament.teams.length || isAddingPlayer} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                {isAddingPlayer ? "Adding..." : "Add"}
+              </button>
             </div>
+            {!selectedTournament ? <p className="mt-3 text-sm font-semibold text-court-clay">Create a tournament before adding players.</p> : null}
+            {selectedTournament && !selectedTournament.teams.length ? <p className="mt-3 text-sm font-semibold text-court-clay">Add at least one team before adding players.</p> : null}
           </form>
 
           <section className="rounded-lg border border-court-ink/10 bg-white p-5 shadow-sm">
