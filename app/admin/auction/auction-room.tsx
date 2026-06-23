@@ -125,7 +125,7 @@ function publishInstantDisplay(
 export function AuctionRoom() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [selectedTournamentId, setSelectedTournamentId] = useState("");
-  const [category, setCategory] = useState<PlayerCategory>("M1");
+  const [category, setCategory] = useState<PlayerCategory | "">("");
   const [customTeamId, setCustomTeamId] = useState("");
   const [ownerTeamId, setOwnerTeamId] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -142,13 +142,14 @@ export function AuctionRoom() {
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
     [selectedTournamentId, tournaments]
   );
-  const categoryLots = selectedTournament?.lots.filter((lot) => lot.category === category) ?? [];
+  const selectedCategory = category || null;
+  const categoryLots = selectedCategory ? selectedTournament?.lots.filter((lot) => lot.category === selectedCategory) ?? [] : [];
   const categoryHasOpenLots = categoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
   const categoryIsCompleted = Boolean(selectedTournament && categoryLots.length > 0 && !categoryHasOpenLots);
-  const activeCategory = (selectedTournament?.lots.find((lot) => lot.status === "LIVE")?.category ?? category) as PlayerCategory;
+  const activeCategory = selectedTournament?.lots.find((lot) => lot.status === "LIVE")?.category ?? selectedCategory;
   const activeCategoryLots = selectedTournament?.lots.filter((lot) => lot.category === activeCategory) ?? [];
   const activeCategoryIsOpen = activeCategoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
-  const canChangeCategory = !activeCategoryIsOpen || activeCategory === category;
+  const canChangeCategory = !activeCategoryIsOpen || activeCategory === selectedCategory;
   const currentLot =
     categoryLots.find((lot) => lot.status === "LIVE") ??
     categoryLots.find((lot) => lot.status === "QUEUED") ??
@@ -355,7 +356,7 @@ export function AuctionRoom() {
     }
   }
 
-  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = category) {
+  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory) {
     if (!selectedTournament || !targetLotId) return;
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
@@ -384,7 +385,7 @@ export function AuctionRoom() {
         data.tournament,
         responseLiveLot,
         realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
-        responseLiveLot ? null : (actionCategory as PlayerCategory),
+        responseLiveLot ? null : actionCategory,
         data.saleEvents ?? []
       );
     }
@@ -449,7 +450,7 @@ export function AuctionRoom() {
   }
 
   async function unsellPlayer(lot: Lot) {
-    await action({ action: "unsell" }, lot.id);
+    await action({ action: "unsell" }, lot.id, lot.category);
   }
 
   async function endAuction() {
@@ -468,7 +469,7 @@ export function AuctionRoom() {
   }
 
   function selectCategory(nextCategory: PlayerCategory) {
-    if (nextCategory !== activeCategory && activeCategoryIsOpen) {
+    if (activeCategory && nextCategory !== activeCategory && activeCategoryIsOpen) {
       setError(`Finish ${activeCategory} before moving to another category.`);
       return;
     }
@@ -549,15 +550,26 @@ export function AuctionRoom() {
 
       {error ? <p className="mt-5 rounded-md bg-court-clay/10 px-4 py-3 text-sm font-semibold text-court-clay">{error}</p> : null}
 
-      {!selectedTournament || !currentLot ? (
+      {!selectedTournament ? (
         <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
           <h2 className="text-2xl font-semibold">No auction lots ready</h2>
           <p className="mt-2 text-court-ink/60">Create a tournament and add players first.</p>
         </section>
+      ) : !selectedCategory ? (
+        <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">Category Selection</p>
+          <h2 className="mt-2 text-3xl font-bold">Select a category to start</h2>
+          <p className="mt-2 text-court-ink/60">The display will keep showing that the auctioneer is selecting a category until you choose one.</p>
+        </section>
+      ) : !currentLot ? (
+        <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
+          <h2 className="text-2xl font-semibold">No players in {selectedCategory}</h2>
+          <p className="mt-2 text-court-ink/60">Select another category or add players to this tournament.</p>
+        </section>
       ) : categoryIsCompleted ? (
         <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">{categoryConfig[category].label}</p>
-          <h2 className="mt-2 text-3xl font-bold">{category} Category Completed</h2>
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">{categoryConfig[selectedCategory].label}</p>
+          <h2 className="mt-2 text-3xl font-bold">{selectedCategory} Category Completed</h2>
           <p className="mt-2 text-court-ink/60">Select another category above. A random open player from that category will go live automatically.</p>
           <div className="mx-auto mt-6 max-w-3xl rounded-lg bg-[#f6fbf7] p-4 text-left">
             <h3 className="text-lg font-semibold">Re-auction Sold Players</h3>
@@ -697,7 +709,7 @@ export function AuctionRoom() {
             </div>
 
             <div className="mt-6 rounded-lg bg-[#f6fbf7] p-4">
-              <h2 className="text-lg font-semibold">Sold Players in {category}</h2>
+              <h2 className="text-lg font-semibold">Sold Players in {selectedCategory}</h2>
               <div className="mt-3 grid gap-2">
                 {categoryLots.filter((lot) => lot.status === "SOLD").length ? categoryLots.filter((lot) => lot.status === "SOLD").map((lot) => (
                   <div key={lot.id} className="flex flex-col gap-3 rounded-md bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
