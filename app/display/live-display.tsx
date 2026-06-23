@@ -172,10 +172,15 @@ export function LiveDisplay() {
     const [nextSale, ...remainingSales] = saleQueue;
     setActiveSale(nextSale);
     setSaleQueue(remainingSales);
+  }, [activeSale, saleQueue]);
+
+  useEffect(() => {
+    if (!activeSale) return;
+
     const timeout = window.setTimeout(() => setActiveSale(null), 2000);
 
     return () => window.clearTimeout(timeout);
-  }, [activeSale, saleQueue]);
+  }, [activeSale]);
 
   const bid = lot?.bids.at(-1);
   const team = bid?.team;
