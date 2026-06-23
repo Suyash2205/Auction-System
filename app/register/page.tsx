@@ -3,6 +3,47 @@
 import { useState } from "react";
 import { Camera, CheckCircle2, Send } from "lucide-react";
 
+async function compressImage(file: File) {
+  if (!file.type.startsWith("image/")) return file;
+
+  const imageUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.src = imageUrl;
+
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("Could not read image."));
+  });
+
+  const maxSize = 1200;
+  const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+  const width = Math.round(image.width * scale);
+  const height = Math.round(image.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    URL.revokeObjectURL(imageUrl);
+    return file;
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  URL.revokeObjectURL(imageUrl);
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", 0.78);
+  });
+
+  if (!blob || blob.size >= file.size) return file;
+
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, "")}.jpg`, {
+    type: "image/jpeg",
+    lastModified: Date.now()
+  });
+}
+
 export default function RegisterPage() {
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -39,6 +80,18 @@ export default function RegisterPage() {
               setError("");
 
               const formData = new FormData(event.currentTarget);
+              const photo = formData.get("photo");
+
+              if (photo instanceof File && photo.size > 0) {
+                try {
+                  formData.set("photo", await compressImage(photo));
+                } catch {
+                  setIsSubmitting(false);
+                  setError("Could not process the selected photo. Please try another image.");
+                  return;
+                }
+              }
+
               const response = await fetch("/api/players", {
                 method: "POST",
                 body: formData
@@ -84,7 +137,7 @@ export default function RegisterPage() {
             <label className="grid min-h-40 place-items-center rounded-lg border border-dashed border-court-green/50 bg-court-mint/35 p-5 text-center">
               <Camera className="text-court-green" size={30} />
               <span className="mt-2 font-semibold">Upload Player Photo</span>
-              <span className="mt-1 text-sm text-court-ink/55">JPG or PNG, square photo preferred</span>
+              <span className="mt-1 text-sm text-court-ink/55">JPG or PNG, compressed before upload</span>
               <input type="file" accept="image/*" name="photo" className="sr-only" />
             </label>
 
