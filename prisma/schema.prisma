@@ -95,6 +95,7 @@ model AuctionLot {
   tournamentId String
   playerId     String
   category     PlayerCategory
+  basePrice    Int
   orderIndex   Int
   status       LotStatus @default(QUEUED)
   soldToTeamId String?
