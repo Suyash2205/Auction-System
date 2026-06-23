@@ -8,8 +8,25 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     include: getTournamentInclude()
   });
+  const ownerLogs = await prisma.auditLog.findMany({
+    where: { action: "OWNER_RESERVED" },
+    select: { tournamentId: true, details: true }
+  });
+  const ownerTeamsByTournament = new Map<string, Set<string>>();
+  ownerLogs.forEach((log) => {
+    const teamId = typeof log.details === "object" && log.details && "teamId" in log.details ? String(log.details.teamId) : "";
+    if (!log.tournamentId || !teamId) return;
+    const teamIds = ownerTeamsByTournament.get(log.tournamentId) ?? new Set<string>();
+    teamIds.add(teamId);
+    ownerTeamsByTournament.set(log.tournamentId, teamIds);
+  });
 
-  return NextResponse.json({ tournaments });
+  return NextResponse.json({
+    tournaments: tournaments.map((tournament) => ({
+      ...tournament,
+      ownerTeamIds: [...(ownerTeamsByTournament.get(tournament.id) ?? new Set<string>())]
+    }))
+  });
 }
 
 export async function POST(request: Request) {

@@ -22,6 +22,17 @@ type TeamBudget = {
   spent: number;
 };
 
+type SaleEvent = {
+  id: string;
+  playerName: string;
+  playerPhotoUrl: string | null;
+  category: BudgetLot["category"];
+  teamName: string;
+  teamColor: string | null;
+  amount: number;
+  kind: "sold" | "owner";
+};
+
 function findNextOpenLot(categoryLots: CategoryLot[], currentLotId: string) {
   const queuedLots = categoryLots.filter((item) => item.status === "QUEUED" && item.id !== currentLotId);
   const skippedLots = categoryLots.filter((item) => item.status === "SKIPPED" && item.id !== currentLotId);
@@ -33,11 +44,11 @@ function findNextOpenLot(categoryLots: CategoryLot[], currentLotId: string) {
 async function finalizeOwnerLots(tournamentId: string, category: BudgetLot["category"]) {
   const categoryLots = await prisma.auctionLot.findMany({
     where: { tournamentId, category },
-    include: { bids: true },
+    include: { bids: true, player: true },
     orderBy: { orderIndex: "asc" }
   });
   const ownerLots = categoryLots.filter((item) => item.status === "UNSOLD" && item.soldToTeamId);
-  if (!ownerLots.length) return;
+  if (!ownerLots.length) return [];
 
   const soldAmounts = categoryLots
     .filter((item) => item.status === "SOLD" && item.soldAmount !== null)
@@ -51,7 +62,9 @@ async function finalizeOwnerLots(tournamentId: string, category: BudgetLot["cate
   });
   const teams = await prisma.team.findMany({ where: { tournamentId } });
   const teamById = new Map<string, TeamBudget>(teams.map((team) => [team.id, team]));
+  const fullTeamById = new Map(teams.map((team) => [team.id, team]));
   const updates = [];
+  const saleEvents: SaleEvent[] = [];
   for (const ownerLot of ownerLots) {
     const team = ownerLot.soldToTeamId ? teamById.get(ownerLot.soldToTeamId) : null;
     if (!team || !ownerLot.soldToTeamId) continue;
@@ -59,6 +72,17 @@ async function finalizeOwnerLots(tournamentId: string, category: BudgetLot["cate
     const usableAmount = Math.max(team.budget - team.spent - getRequiredReserve(budgetLots, team.id), 0);
     const soldAmount = Math.min(averageAmount, usableAmount);
     teamById.set(team.id, { ...team, spent: team.spent + soldAmount });
+    const fullTeam = fullTeamById.get(team.id);
+    saleEvents.push({
+      id: `${ownerLot.id}-${soldAmount}`,
+      playerName: ownerLot.player.name,
+      playerPhotoUrl: ownerLot.player.photoUrl,
+      category,
+      teamName: fullTeam?.name ?? "Owner Team",
+      teamColor: fullTeam?.color ?? null,
+      amount: soldAmount,
+      kind: "owner"
+    });
 
     updates.push(
       prisma.auctionLot.update({
@@ -85,6 +109,23 @@ async function finalizeOwnerLots(tournamentId: string, category: BudgetLot["cate
   if (updates.length) {
     await prisma.$transaction(updates);
   }
+
+  return saleEvents;
+}
+
+async function getOwnerTeamIds(tournamentId: string) {
+  const ownerLogs = await prisma.auditLog.findMany({
+    where: { tournamentId, action: "OWNER_RESERVED" },
+    select: { details: true }
+  });
+
+  return [
+    ...new Set(
+      ownerLogs
+        .map((log) => (typeof log.details === "object" && log.details && "teamId" in log.details ? String(log.details.teamId) : ""))
+        .filter(Boolean)
+    )
+  ];
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -93,6 +134,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const action = String(body.action ?? "");
   const lotId = String(body.lotId ?? "");
   const currentCategory = String(body.currentCategory ?? "");
+  let saleEvents: SaleEvent[] = [];
 
   if (!lotId) {
     return NextResponse.json({ error: "Auction lot is required." }, { status: 400 });
@@ -190,6 +232,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!team || team.tournamentId !== id) {
       return NextResponse.json({ error: "Team not found." }, { status: 404 });
     }
+    const existingOwner = await prisma.auditLog.findFirst({
+      where: {
+        tournamentId: id,
+        action: "OWNER_RESERVED",
+        details: {
+          path: ["teamId"],
+          equals: teamId
+        }
+      }
+    });
+    if (existingOwner) {
+      return NextResponse.json({ error: `${team.name} already has an owner player.` }, { status: 400 });
+    }
 
     if (amount > team.budget - team.spent) {
       return NextResponse.json({ error: "Bid is higher than this team's remaining purse." }, { status: 400 });
@@ -277,7 +332,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
 
     if (!nextOpenLot) {
-      await finalizeOwnerLots(id, lot.category);
+      saleEvents = await finalizeOwnerLots(id, lot.category);
     }
   }
 
@@ -324,6 +379,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const nextOpenLot = findNextOpenLot(categoryLots, lotId);
+    const soldTeam = await prisma.team.findUnique({ where: { id: latestBid.teamId } });
+    const soldPlayer = await prisma.player.findUnique({ where: { id: lot.playerId } });
+    saleEvents.push({
+      id: `${lotId}-${latestBid.amount}`,
+      playerName: soldPlayer?.name ?? "Player",
+      playerPhotoUrl: soldPlayer?.photoUrl ?? null,
+      category: lot.category,
+      teamName: soldTeam?.name ?? "Team",
+      teamColor: soldTeam?.color ?? null,
+      amount: latestBid.amount,
+      kind: "sold"
+    });
 
     await prisma.$transaction([
       prisma.auctionLot.update({
@@ -353,7 +420,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
 
     if (!nextOpenLot) {
-      await finalizeOwnerLots(id, lot.category);
+      saleEvents = [...saleEvents, ...(await finalizeOwnerLots(id, lot.category))];
     }
   }
 
@@ -426,5 +493,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const tournament = await getActiveTournament(id);
-  return NextResponse.json({ tournament });
+  return NextResponse.json({ tournament: tournament ? { ...tournament, ownerTeamIds: await getOwnerTeamIds(id) } : tournament, saleEvents });
 }

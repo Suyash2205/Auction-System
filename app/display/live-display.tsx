@@ -42,6 +42,17 @@ type Tournament = {
   }>;
 };
 
+type SaleEvent = {
+  id: string;
+  playerName: string;
+  playerPhotoUrl: string | null;
+  category: PlayerCategory;
+  teamName: string;
+  teamColor: string | null;
+  amount: number;
+  kind: "sold" | "owner";
+};
+
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
 const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
 const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
@@ -53,8 +64,11 @@ export function LiveDisplay() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [lot, setLot] = useState<Lot | null>(null);
   const [completedCategory, setCompletedCategory] = useState<PlayerCategory | null>(null);
+  const [saleQueue, setSaleQueue] = useState<SaleEvent[]>([]);
+  const [activeSale, setActiveSale] = useState<SaleEvent | null>(null);
   const isLoadingRef = useRef(false);
   const lastInstantStateAtRef = useRef(0);
+  const seenSaleIdsRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     if (isLoadingRef.current) return;
@@ -80,7 +94,7 @@ export function LiveDisplay() {
 
     const interval = window.setInterval(load, 500);
     const applyInstantState = (value: unknown) => {
-      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null };
+      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[] };
 
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
@@ -88,6 +102,16 @@ export function LiveDisplay() {
       setTournament(data.tournament ?? null);
       setLot(data.liveLot ?? null);
       setCompletedCategory(data.completedCategory ?? null);
+      if (data.saleEvents?.length) {
+        const freshSaleEvents = data.saleEvents.filter((saleEvent) => {
+          if (seenSaleIdsRef.current.has(saleEvent.id)) return false;
+          seenSaleIdsRef.current.add(saleEvent.id);
+          return true;
+        });
+        if (freshSaleEvents.length) {
+          setSaleQueue((current) => [...current, ...freshSaleEvents]);
+        }
+      }
     };
 
     try {
@@ -136,6 +160,17 @@ export function LiveDisplay() {
     };
   }, [load]);
 
+  useEffect(() => {
+    if (activeSale || !saleQueue.length) return;
+
+    const [nextSale, ...remainingSales] = saleQueue;
+    setActiveSale(nextSale);
+    setSaleQueue(remainingSales);
+    const timeout = window.setTimeout(() => setActiveSale(null), 2000);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeSale, saleQueue]);
+
   const bid = lot?.bids.at(-1);
   const team = bid?.team;
 
@@ -146,6 +181,37 @@ export function LiveDisplay() {
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
           <h1 className="mt-4 text-5xl font-black">Waiting for tournament</h1>
         </div>
+      </main>
+    );
+  }
+
+  if (activeSale) {
+    return (
+      <main className="min-h-screen bg-court-ink text-white">
+        <section className="court-grid grid min-h-screen grid-cols-1 items-center gap-8 px-8 py-8 lg:grid-cols-[0.8fr_1.2fr]">
+          <div className="relative mx-auto aspect-[4/5] w-full max-w-md overflow-hidden rounded-lg border border-white/15 bg-white/10 shadow-glow">
+            {activeSale.playerPhotoUrl ? (
+              <Image src={activeSale.playerPhotoUrl} alt={activeSale.playerName} fill className="object-cover" sizes="(max-width: 1024px) 100vw, 35vw" priority />
+            ) : null}
+            <div className="absolute left-5 top-5 rounded-md bg-court-lime px-4 py-2 text-sm font-black text-court-ink">
+              {activeSale.category} · {categoryConfig[activeSale.category].label}
+            </div>
+          </div>
+          <div className="animate-pulse">
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">
+              {activeSale.kind === "owner" ? "Owner Player Sold" : "Sold"}
+            </p>
+            <h1 className="mt-4 text-6xl font-black leading-none sm:text-7xl lg:text-8xl">{activeSale.playerName}</h1>
+            <div className="mt-8 rounded-lg border border-white/15 bg-white/10 p-6">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/55">Sold To</p>
+              <div className="mt-4 flex items-center gap-4">
+                <span className="h-6 w-6 rounded-full" style={{ backgroundColor: activeSale.teamColor ?? "#1f8f64" }} />
+                <p className="text-5xl font-black">{activeSale.teamName}</p>
+              </div>
+              <p className="mt-6 text-7xl font-black text-court-lime">{formatPoints(activeSale.amount)}</p>
+            </div>
+          </div>
+        </section>
       </main>
     );
   }
