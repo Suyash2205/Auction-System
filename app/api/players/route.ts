@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { createHmac } from "crypto";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
@@ -9,6 +11,17 @@ function cleanFileName(value: string) {
 }
 
 export async function GET() {
+  const cookieStore = await cookies();
+  const session = cookieStore.get("auction_admin")?.value;
+  const [timestamp, signature] = session?.split(".") ?? [];
+  const expected = timestamp && process.env.NEXTAUTH_SECRET
+    ? createHmac("sha256", process.env.NEXTAUTH_SECRET).update(timestamp).digest("hex")
+    : "";
+
+  if (!timestamp || signature !== expected || Date.now() - Number(timestamp) > 1000 * 60 * 60 * 12) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const players = await prisma.player.findMany({
     orderBy: { createdAt: "desc" }
   });
@@ -27,6 +40,11 @@ export async function POST(request: Request) {
 
   if (!name || !phone || !experience) {
     return NextResponse.json({ error: "Name, mobile number, and experience are required." }, { status: 400 });
+  }
+
+  const existingPlayer = await prisma.player.findFirst({ where: { phone } });
+  if (existingPlayer) {
+    return NextResponse.json({ error: "This mobile number is already registered." }, { status: 409 });
   }
 
   let photoUrl: string | undefined;

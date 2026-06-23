@@ -1,76 +1,69 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Gavel, ShieldCheck } from "lucide-react";
-import { AUCTION_LIVE_STATE_KEY, type AuctionLiveState } from "@/lib/auction-live-state";
-import { categoryConfig, demoTournament, formatPoints } from "@/lib/demo-data";
+import { categoryConfig, formatPoints } from "@/lib/demo-data";
+import type { PlayerCategory } from "@/lib/types";
 
-function readLiveState(): AuctionLiveState {
-  if (typeof window === "undefined") {
-    return {
-      category: "M1",
-      lotIndex: 0,
-      lots: demoTournament.lots,
-      updatedAt: new Date().toISOString()
-    };
-  }
+type Team = {
+  id: string;
+  name: string;
+  color: string | null;
+  budget: number;
+  spent: number;
+};
 
-  const raw = window.localStorage.getItem(AUCTION_LIVE_STATE_KEY);
-  if (!raw) {
-    return {
-      category: "M1",
-      lotIndex: 0,
-      lots: demoTournament.lots,
-      updatedAt: new Date().toISOString()
-    };
-  }
+type Lot = {
+  id: string;
+  category: PlayerCategory;
+  basePrice: number;
+  status: string;
+  player: {
+    name: string;
+    photoUrl: string | null;
+    experience: string;
+    city: string | null;
+    dominantHand: string | null;
+  };
+  bids: Array<{ id: string; amount: number; team: Team }>;
+};
 
-  try {
-    return JSON.parse(raw) as AuctionLiveState;
-  } catch {
-    return {
-      category: "M1",
-      lotIndex: 0,
-      lots: demoTournament.lots,
-      updatedAt: new Date().toISOString()
-    };
-  }
-}
+type Tournament = {
+  name: string;
+  teams: Team[];
+};
 
 export function LiveDisplay() {
-  const [liveState, setLiveState] = useState<AuctionLiveState>({
-    category: "M1",
-    lotIndex: 0,
-    lots: demoTournament.lots,
-    updatedAt: new Date().toISOString()
-  });
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [lot, setLot] = useState<Lot | null>(null);
+
+  async function load() {
+    const response = await fetch("/api/public/display", { cache: "no-store" });
+    const data = await response.json();
+    setTournament(data.tournament);
+    setLot(data.liveLot);
+  }
 
   useEffect(() => {
-    setLiveState(readLiveState());
-
-    function syncFromStorage(event?: StorageEvent) {
-      if (event && event.key !== AUCTION_LIVE_STATE_KEY) return;
-      setLiveState(readLiveState());
-    }
-
-    window.addEventListener("storage", syncFromStorage);
-    const interval = window.setInterval(() => setLiveState(readLiveState()), 900);
-
-    return () => {
-      window.removeEventListener("storage", syncFromStorage);
-      window.clearInterval(interval);
-    };
+    load();
+    const interval = window.setInterval(load, 1200);
+    return () => window.clearInterval(interval);
   }, []);
 
-  const categoryLots = useMemo(
-    () => liveState.lots.filter((lot) => lot.category === liveState.category),
-    [liveState]
-  );
-  const lot = categoryLots[liveState.lotIndex] ?? categoryLots[0] ?? liveState.lots[0] ?? demoTournament.lots[0];
-  const player = demoTournament.players.find((item) => item.id === lot.playerId) ?? demoTournament.players[0];
-  const bid = lot.bids.at(-1);
-  const team = bid ? demoTournament.teams.find((item) => item.id === bid.teamId) : undefined;
+  const bid = lot?.bids.at(-1);
+  const team = bid?.team;
+
+  if (!tournament || !lot) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-court-ink text-white">
+        <div className="text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
+          <h1 className="mt-4 text-5xl font-black">Waiting for tournament</h1>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-court-ink text-white">
@@ -81,7 +74,7 @@ export function LiveDisplay() {
               <Gavel size={22} />
             </span>
             <div>
-              <p className="text-lg font-bold">Lush Pickleball League 4.0</p>
+              <p className="text-lg font-bold">{tournament.name}</p>
               <p className="text-sm text-white/60">Live Auction Display</p>
             </div>
           </div>
@@ -92,7 +85,9 @@ export function LiveDisplay() {
 
         <div className="mx-auto grid w-full max-w-7xl items-center gap-8 px-6 py-8 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="relative aspect-[4/5] overflow-hidden rounded-lg border border-white/15 bg-white/10 shadow-glow">
-            <Image src={player.photoUrl} alt={player.name} fill className="object-cover" sizes="(max-width: 1024px) 100vw, 45vw" priority />
+            {lot.player.photoUrl ? (
+              <Image src={lot.player.photoUrl} alt={lot.player.name} fill className="object-cover" sizes="(max-width: 1024px) 100vw, 45vw" priority />
+            ) : null}
             <div className="absolute left-5 top-5 rounded-md bg-court-lime px-4 py-2 text-sm font-black text-court-ink">
               {lot.category} · {categoryConfig[lot.category].label}
             </div>
@@ -100,18 +95,18 @@ export function LiveDisplay() {
 
           <section>
             <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Now Auctioning</p>
-            <h1 className="mt-4 text-6xl font-black leading-none sm:text-7xl lg:text-8xl">{player.name}</h1>
+            <h1 className="mt-4 text-6xl font-black leading-none sm:text-7xl lg:text-8xl">{lot.player.name}</h1>
             <div className="mt-6 grid gap-3 text-xl text-white/75 sm:grid-cols-3">
-              <p className="rounded-md bg-white/10 px-4 py-3">{player.experience}</p>
-              <p className="rounded-md bg-white/10 px-4 py-3">{player.city}</p>
-              <p className="rounded-md bg-white/10 px-4 py-3">{player.dominantHand} hand</p>
+              <p className="rounded-md bg-white/10 px-4 py-3">{lot.player.experience}</p>
+              <p className="rounded-md bg-white/10 px-4 py-3">{lot.player.city || "-"}</p>
+              <p className="rounded-md bg-white/10 px-4 py-3">{lot.player.dominantHand || "-"} hand</p>
             </div>
 
             <div className="mt-8 rounded-lg border border-white/15 bg-white/10 p-6">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/55">Current Highest Bid</p>
               <p className="mt-3 text-7xl font-black text-court-lime">{formatPoints(bid?.amount ?? lot.basePrice)}</p>
               <div className="mt-4 flex items-center gap-4">
-                {team ? <span className="h-5 w-5 rounded-full" style={{ backgroundColor: team.color }} /> : null}
+                {team ? <span className="h-5 w-5 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} /> : null}
                 <p className="text-4xl font-black">{team ? team.name : "Opening Bid"}</p>
               </div>
             </div>
@@ -119,10 +114,10 @@ export function LiveDisplay() {
         </div>
 
         <footer className="grid gap-3 border-t border-white/15 px-6 py-4 md:grid-cols-4">
-          {demoTournament.teams.map((item) => (
+          {tournament.teams.map((item) => (
             <div key={item.id} className="flex items-center justify-between rounded-md bg-white/10 px-4 py-3">
               <span className="flex items-center gap-2 font-semibold">
-                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color ?? "#1f8f64" }} />
                 {item.name}
               </span>
               <span className="text-sm text-white/65">{formatPoints(item.budget - item.spent)} left</span>

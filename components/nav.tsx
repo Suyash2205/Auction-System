@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Gavel, LayoutDashboard, MonitorUp, UserPlus, UsersRound } from "lucide-react";
+import { LogoutButton } from "@/components/logout-button";
 
 const links = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
@@ -36,6 +37,7 @@ export function Nav() {
               </Link>
             );
           })}
+          <LogoutButton />
         </nav>
       </div>
     </header>
