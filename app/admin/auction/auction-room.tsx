@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
+import { supabase } from "@/lib/supabase";
 import type { PlayerCategory } from "@/lib/types";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 type Team = {
   id: string;
@@ -54,6 +56,8 @@ type Tournament = {
 
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
 const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
+const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
+const SUPABASE_BROADCAST_EVENT = "state";
 
 function getNextOpenLot(lots: Lot[], currentLotId: string) {
   const currentIndex = lots.findIndex((lot) => lot.id === currentLotId);
@@ -66,7 +70,7 @@ function getNextOpenLot(lots: Lot[], currentLotId: string) {
   );
 }
 
-function publishInstantDisplay(tournament: Tournament, liveLot: Lot | null) {
+function publishInstantDisplay(tournament: Tournament, liveLot: Lot | null, realtimeChannel: RealtimeChannel | null) {
   const payload = {
     sentAt: Date.now(),
     tournament: {
@@ -82,6 +86,12 @@ function publishInstantDisplay(tournament: Tournament, liveLot: Lot | null) {
   } catch {
     // Best-effort same-browser acceleration; server state remains authoritative.
   }
+
+  void realtimeChannel?.send({
+    type: "broadcast",
+    event: SUPABASE_BROADCAST_EVENT,
+    payload
+  });
 }
 
 export function AuctionRoom() {
@@ -91,6 +101,7 @@ export function AuctionRoom() {
   const [customTeamId, setCustomTeamId] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [error, setError] = useState("");
+  const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -123,6 +134,22 @@ export function AuctionRoom() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    const realtimeClient = supabase;
+    const channel = realtimeClient.channel(SUPABASE_BROADCAST_CHANNEL, {
+      config: { broadcast: { self: false } }
+    });
+    realtimeBroadcastRef.current = channel;
+    channel.subscribe();
+
+    return () => {
+      realtimeBroadcastRef.current = null;
+      void realtimeClient.removeChannel(channel);
+    };
   }, []);
 
   function applyOptimisticAction(payload: Record<string, unknown>, targetLotId: string) {
@@ -213,7 +240,7 @@ export function AuctionRoom() {
     );
 
     if (optimisticTournament) {
-      publishInstantDisplay(optimisticTournament, optimisticLiveLot);
+      publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeBroadcastRef.current);
     }
   }
 

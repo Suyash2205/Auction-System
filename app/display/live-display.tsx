@@ -37,6 +37,8 @@ type Tournament = {
 
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
 const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
+const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
+const SUPABASE_BROADCAST_EVENT = "state";
 const MAX_INSTANT_STATE_AGE_MS = 10_000;
 
 export function LiveDisplay() {
@@ -91,6 +93,12 @@ export function LiveDisplay() {
     };
 
     window.addEventListener("storage", storageListener);
+    const supabaseBroadcastChannel = supabase
+      ?.channel(SUPABASE_BROADCAST_CHANNEL, {
+        config: { broadcast: { self: false } }
+      })
+      .on("broadcast", { event: SUPABASE_BROADCAST_EVENT }, ({ payload }) => applyInstantState(payload))
+      .subscribe();
     const supabaseChannel = supabase
       ?.channel("live-auction-display")
       .on("postgres_changes", { event: "*", schema: "public", table: "AuctionLot" }, load)
@@ -102,6 +110,9 @@ export function LiveDisplay() {
       window.clearInterval(interval);
       instantChannel.close();
       window.removeEventListener("storage", storageListener);
+      if (supabaseBroadcastChannel) {
+        supabase?.removeChannel(supabaseBroadcastChannel);
+      }
       if (supabaseChannel) {
         supabase?.removeChannel(supabaseChannel);
       }
