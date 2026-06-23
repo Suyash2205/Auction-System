@@ -16,9 +16,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     where: { id: lotId },
     include: { bids: { orderBy: { createdAt: "asc" } } }
   });
-  const tournament = await prisma.tournament.findUnique({ where: { id } });
+  const tournamentConfig = await prisma.tournament.findUnique({ where: { id } });
 
-  if (!lot || lot.tournamentId !== id || !tournament) {
+  if (!lot || lot.tournamentId !== id || !tournamentConfig) {
     return NextResponse.json({ error: "Lot not found." }, { status: 404 });
   }
 
@@ -39,7 +39,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const teamId = String(body.teamId ?? "");
     const amount = Number(body.amount);
     const latestBid = lot.bids.at(-1);
-    const minimumBid = Math.max(lot.basePrice, (latestBid?.amount ?? lot.basePrice - tournament.bidIncrement) + tournament.bidIncrement);
+    const minimumBid = Math.max(lot.basePrice, (latestBid?.amount ?? lot.basePrice - tournamentConfig.bidIncrement) + tournamentConfig.bidIncrement);
 
     if (!teamId || !Number.isFinite(amount) || amount < minimumBid) {
       return NextResponse.json({ error: `Bid must be at least ${minimumBid}.` }, { status: 400 });
