@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ChevronRight, Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
+import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -127,28 +127,6 @@ export function AuctionRoom() {
     setCustomAmount("");
   }
 
-  async function nextPlayer() {
-    if (!selectedTournament || !currentLot) return;
-    const currentIndex = categoryLots.findIndex((lot) => lot.id === currentLot.id);
-    const nextLot =
-      categoryLots.slice(currentIndex + 1).find((lot) => lot.status === "QUEUED") ??
-      categoryLots.find((lot) => lot.status === "QUEUED") ??
-      categoryLots.find((lot) => lot.status === "SKIPPED");
-    if (!nextLot) return;
-    setError("");
-    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "live", lotId: nextLot.id, currentCategory: category })
-    });
-    if (!response.ok) {
-      const data = await response.json();
-      setError(data.error ?? "Could not move to next player.");
-      return;
-    }
-    await load();
-  }
-
   async function skipPlayer() {
     if (!currentLot) return;
     await action({ action: "skip" });
@@ -244,15 +222,12 @@ export function AuctionRoom() {
                   <p className="mt-3 text-lg font-semibold text-court-ink/60">Waiting for first bid</p>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => action({ action: "sold" })} disabled={!latestBid || currentLot.status === "SOLD"} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => action({ action: "sold" })} disabled={!latestBid || currentLot.status !== "LIVE"} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
                 <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE"} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
                   <SkipForward size={17} /> Skip
                 </button>
-                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status === "SOLD"} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
-                <button onClick={nextPlayer} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold">
-                  Next Player <ChevronRight size={17} />
-                </button>
+                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status !== "LIVE"} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
               </div>
             </div>
 

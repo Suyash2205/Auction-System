@@ -3,6 +3,21 @@ import { writeAuditLog } from "@/lib/audit-log";
 import { getActiveTournament } from "@/lib/auction-db";
 import { prisma } from "@/lib/prisma";
 
+type CategoryLot = {
+  id: string;
+  orderIndex: number;
+  status: string;
+};
+
+function findNextOpenLot(categoryLots: CategoryLot[], currentLotId: string) {
+  const currentIndex = categoryLots.findIndex((item) => item.id === currentLotId);
+  const queuedAfterCurrent = categoryLots.slice(currentIndex + 1).find((item) => item.status === "QUEUED");
+  const queuedFromStart = categoryLots.find((item) => item.status === "QUEUED" && item.id !== currentLotId);
+  const skippedFromStart = categoryLots.find((item) => item.status === "SKIPPED" && item.id !== currentLotId);
+
+  return queuedAfterCurrent ?? queuedFromStart ?? skippedFromStart ?? null;
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
@@ -29,6 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     orderBy: { orderIndex: "asc" },
     include: { bids: { orderBy: { createdAt: "asc" } } }
   });
+  const maxOrderIndex = Math.max(...categoryLots.map((item) => item.orderIndex), 0);
 
   const liveLot = await prisma.auctionLot.findFirst({
     where: { tournamentId: id, status: "LIVE" }
@@ -134,22 +150,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "Only the live player can be skipped." }, { status: 400 });
     }
 
-    const currentIndex = categoryLots.findIndex((item) => item.id === lotId);
-    const nextQueuedLot =
-      categoryLots.slice(currentIndex + 1).find((item) => item.status === "QUEUED") ??
-      categoryLots.find((item) => item.status === "QUEUED");
+    const nextOpenLot = findNextOpenLot(categoryLots, lotId);
 
-    if (!nextQueuedLot) {
+    if (!nextOpenLot) {
       return NextResponse.json({ error: "This player cannot be skipped because every other player in this category has already come up." }, { status: 400 });
     }
 
     await prisma.$transaction([
       prisma.auctionLot.update({
         where: { id: lotId },
-        data: { status: "SKIPPED" }
+        data: { status: "SKIPPED", orderIndex: maxOrderIndex + 1 }
       }),
       prisma.auctionLot.update({
-        where: { id: nextQueuedLot.id },
+        where: { id: nextOpenLot.id },
         data: { status: "LIVE" }
       })
     ]);
@@ -160,7 +173,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       entityId: lotId,
       tournamentId: id,
       summary: "Skipped player within category",
-      details: { lotId, category: lot.category, nextLotId: nextQueuedLot.id }
+      details: { lotId, category: lot.category, nextLotId: nextOpenLot.id }
     });
   }
 
@@ -174,6 +187,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "Cannot sell without a bid." }, { status: 400 });
     }
 
+    const nextOpenLot = findNextOpenLot(categoryLots, lotId);
+
     await prisma.$transaction([
       prisma.auctionLot.update({
         where: { id: lotId },
@@ -182,7 +197,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       prisma.team.update({
         where: { id: latestBid.teamId },
         data: { spent: { increment: latestBid.amount } }
-      })
+      }),
+      ...(nextOpenLot
+        ? [
+            prisma.auctionLot.update({
+              where: { id: nextOpenLot.id },
+              data: { status: "LIVE" }
+            })
+          ]
+        : [])
     ]);
     await writeAuditLog({
       action: "SOLD",
@@ -190,22 +213,38 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       entityId: lotId,
       tournamentId: id,
       summary: `Sold player for ${latestBid.amount}`,
-      details: { lotId, teamId: latestBid.teamId, amount: latestBid.amount }
+      details: { lotId, teamId: latestBid.teamId, amount: latestBid.amount, nextLotId: nextOpenLot?.id ?? null }
     });
   }
 
   if (action === "unsold") {
-    await prisma.auctionLot.update({
-      where: { id: lotId },
-      data: { status: "UNSOLD" }
-    });
+    if (lot.status !== "LIVE") {
+      return NextResponse.json({ error: "Only the live player can be marked unsold." }, { status: 400 });
+    }
+
+    const nextOpenLot = findNextOpenLot(categoryLots, lotId);
+
+    if (!nextOpenLot) {
+      return NextResponse.json({ error: "This player cannot be marked unsold because every player in this category must eventually be sold." }, { status: 400 });
+    }
+
+    await prisma.$transaction([
+      prisma.auctionLot.update({
+        where: { id: lotId },
+        data: { status: "SKIPPED", orderIndex: maxOrderIndex + 1 }
+      }),
+      prisma.auctionLot.update({
+        where: { id: nextOpenLot.id },
+        data: { status: "LIVE" }
+      })
+    ]);
     await writeAuditLog({
       action: "UNSOLD",
       entityType: "AuctionLot",
       entityId: lotId,
       tournamentId: id,
-      summary: "Marked player unsold",
-      details: { lotId }
+      summary: "Moved unsold player to end of category queue",
+      details: { lotId, category: lot.category, nextLotId: nextOpenLot.id }
     });
   }
 
