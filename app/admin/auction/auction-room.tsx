@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ChevronRight, Download, Gavel, Trophy } from "lucide-react";
+import { ChevronRight, Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -64,10 +64,16 @@ export function AuctionRoom() {
     [selectedTournamentId, tournaments]
   );
   const categoryLots = selectedTournament?.lots.filter((lot) => lot.category === category) ?? [];
+  const activeCategory = (selectedTournament?.lots.find((lot) => lot.status === "LIVE")?.category ?? category) as PlayerCategory;
+  const activeCategoryLots = selectedTournament?.lots.filter((lot) => lot.category === activeCategory) ?? [];
+  const activeCategoryIsOpen = activeCategoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
+  const canChangeCategory = !activeCategoryIsOpen || activeCategory === category;
   const currentLot =
     categoryLots.find((lot) => lot.status === "LIVE") ??
     categoryLots.find((lot) => lot.status === "QUEUED") ??
+    categoryLots.find((lot) => lot.status === "SKIPPED") ??
     categoryLots[0];
+  const openCurrentLot = currentLot && ["LIVE", "QUEUED", "SKIPPED"].includes(currentLot.status);
   const latestBid = currentLot?.bids.at(-1);
   const leadingTeam = latestBid?.team;
   const defaultNextAmount = currentLot
@@ -86,13 +92,13 @@ export function AuctionRoom() {
     load();
   }, []);
 
-  async function action(payload: Record<string, unknown>) {
-    if (!selectedTournament || !currentLot) return;
+  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id) {
+    if (!selectedTournament || !targetLotId) return;
     setError("");
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ lotId: currentLot.id, ...payload })
+      body: JSON.stringify({ lotId: targetLotId, currentCategory: category, ...payload })
     });
     const data = await response.json();
     if (!response.ok) {
@@ -103,6 +109,10 @@ export function AuctionRoom() {
   }
 
   async function addBid(teamId: string, amount: number) {
+    if (!openCurrentLot) {
+      setError("This player is already closed. Use Re-auction if you need to restart.");
+      return;
+    }
     await action({ action: "bid", teamId, amount });
   }
 
@@ -120,13 +130,16 @@ export function AuctionRoom() {
   async function nextPlayer() {
     if (!selectedTournament || !currentLot) return;
     const currentIndex = categoryLots.findIndex((lot) => lot.id === currentLot.id);
-    const nextLot = categoryLots.slice(currentIndex + 1).find((lot) => lot.status === "QUEUED") ?? categoryLots.find((lot) => lot.status === "QUEUED");
+    const nextLot =
+      categoryLots.slice(currentIndex + 1).find((lot) => lot.status === "QUEUED") ??
+      categoryLots.find((lot) => lot.status === "QUEUED") ??
+      categoryLots.find((lot) => lot.status === "SKIPPED");
     if (!nextLot) return;
     setError("");
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "live", lotId: nextLot.id })
+      body: JSON.stringify({ action: "live", lotId: nextLot.id, currentCategory: category })
     });
     if (!response.ok) {
       const data = await response.json();
@@ -134,6 +147,24 @@ export function AuctionRoom() {
       return;
     }
     await load();
+  }
+
+  async function skipPlayer() {
+    if (!currentLot) return;
+    await action({ action: "skip" });
+  }
+
+  async function unsellPlayer(lot: Lot) {
+    await action({ action: "unsell" }, lot.id);
+  }
+
+  function selectCategory(nextCategory: PlayerCategory) {
+    if (nextCategory !== activeCategory && activeCategoryIsOpen) {
+      setError(`Finish ${activeCategory} before moving to another category.`);
+      return;
+    }
+    setCategory(nextCategory);
+    setError("");
   }
 
   return (
@@ -164,8 +195,9 @@ export function AuctionRoom() {
           {categoryOrder.map((item) => (
             <button
               key={item}
-              onClick={() => setCategory(item)}
-              className={`h-11 rounded-md px-5 text-sm font-bold transition ${category === item ? "bg-court-green text-white shadow-glow" : "bg-white text-court-ink"}`}
+              onClick={() => selectCategory(item)}
+              disabled={item !== activeCategory && !canChangeCategory}
+              className={`h-11 rounded-md px-5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${category === item ? "bg-court-green text-white shadow-glow" : "bg-white text-court-ink"}`}
             >
               {item}
             </button>
@@ -213,9 +245,12 @@ export function AuctionRoom() {
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => action({ action: "sold" })} disabled={!latestBid} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
-                <button onClick={() => action({ action: "unsold" })} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white">Unsold</button>
-                <button onClick={nextPlayer} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold">
+                <button onClick={() => action({ action: "sold" })} disabled={!latestBid || currentLot.status === "SOLD"} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
+                <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE"} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
+                  <SkipForward size={17} /> Skip
+                </button>
+                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status === "SOLD"} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
+                <button onClick={nextPlayer} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold">
                   Next Player <ChevronRight size={17} />
                 </button>
               </div>
@@ -225,7 +260,7 @@ export function AuctionRoom() {
               <h2 className="text-lg font-semibold">Quick Bid</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {selectedTournament.teams.map((team) => (
-                  <button key={team.id} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30">
+                  <button key={team.id} disabled={!openCurrentLot} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30 disabled:cursor-not-allowed disabled:opacity-40">
                     <span className="flex items-center gap-2 font-semibold">
                       <span className="h-3 w-3 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
                       {team.name}
@@ -245,7 +280,7 @@ export function AuctionRoom() {
                   ))}
                 </select>
                 <input value={customAmount} onChange={(event) => setCustomAmount(event.target.value)} min={defaultNextAmount} type="number" step={selectedTournament.bidIncrement} placeholder={`Eg. ${defaultNextAmount}`} className="focus-ring h-12 rounded-md border border-court-ink/15 bg-white px-3" />
-                <button className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-court-ink px-5 text-sm font-bold text-white"><Gavel size={17} /> Add Bid</button>
+                <button disabled={!openCurrentLot} className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-court-ink px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Gavel size={17} /> Add Bid</button>
               </div>
               <p className="mt-3 text-sm text-court-ink/55">Minimum valid custom bid is {formatPoints(defaultNextAmount)} pts.</p>
             </form>
@@ -259,6 +294,20 @@ export function AuctionRoom() {
                     <span>{formatPoints(bid.amount)} pts</span>
                   </div>
                 )) : <p className="rounded-md bg-white px-4 py-3 text-sm text-court-ink/55">No bids yet.</p>}
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-lg bg-[#f6fbf7] p-4">
+              <h2 className="text-lg font-semibold">Sold Players in {category}</h2>
+              <div className="mt-3 grid gap-2">
+                {categoryLots.filter((lot) => lot.status === "SOLD").length ? categoryLots.filter((lot) => lot.status === "SOLD").map((lot) => (
+                  <div key={lot.id} className="flex flex-col gap-3 rounded-md bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <span className="font-semibold">{lot.player.name} · {formatPoints(lot.soldAmount ?? 0)} pts</span>
+                    <button onClick={() => unsellPlayer(lot)} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-3 py-2 text-sm font-bold">
+                      <RotateCcw size={15} /> Re-auction
+                    </button>
+                  </div>
+                )) : <p className="rounded-md bg-white px-4 py-3 text-sm text-court-ink/55">No sold players in this category yet.</p>}
               </div>
             </div>
           </section>
