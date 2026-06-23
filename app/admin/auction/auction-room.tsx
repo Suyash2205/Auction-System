@@ -105,6 +105,7 @@ export function AuctionRoom() {
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
   const pendingDisplayLotRef = useRef<Lot | null>(null);
+  const latestActionRequestRef = useRef(0);
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -260,6 +261,8 @@ export function AuctionRoom() {
 
   async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id) {
     if (!selectedTournament || !targetLotId) return;
+    const requestId = latestActionRequestRef.current + 1;
+    latestActionRequestRef.current = requestId;
     setError("");
     applyOptimisticAction(payload, targetLotId);
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
@@ -268,12 +271,18 @@ export function AuctionRoom() {
       body: JSON.stringify({ lotId: targetLotId, currentCategory: category, ...payload })
     });
     const data = await response.json();
+    if (requestId !== latestActionRequestRef.current) return;
+
     if (!response.ok) {
       setError(data.error ?? "Auction action failed.");
       await load();
       return;
     }
-    await load();
+    if (data.tournament) {
+      setTournaments((current) => current.map((tournament) => (tournament.id === data.tournament.id ? data.tournament : tournament)));
+      setSelectedTournamentId(data.tournament.id);
+      setCustomTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
+    }
   }
 
   async function addBid(teamId: string, amount: number) {
