@@ -48,13 +48,25 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
 export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const tournament = await prisma.tournament.findUnique({ where: { id } });
+  const tournament = await prisma.tournament.findUnique({
+    where: { id },
+    include: { lots: { select: { id: true } } }
+  });
 
   if (!tournament) {
     return NextResponse.json({ error: "Tournament not found." }, { status: 404 });
   }
 
-  await prisma.tournament.delete({ where: { id } });
+  const lotIds = tournament.lots.map((lot) => lot.id);
+
+  await prisma.$transaction([
+    prisma.bid.deleteMany({ where: { lotId: { in: lotIds } } }),
+    prisma.auctionLot.deleteMany({ where: { tournamentId: id } }),
+    prisma.tournamentPlayer.deleteMany({ where: { tournamentId: id } }),
+    prisma.team.deleteMany({ where: { tournamentId: id } }),
+    prisma.tournament.delete({ where: { id } })
+  ]);
+
   await writeAuditLog({
     action: "DELETE",
     entityType: "Tournament",
