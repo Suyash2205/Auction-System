@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { writeAuditLog } from "@/lib/audit-log";
 import { categoryConfig } from "@/lib/demo-data";
 import { getActiveTournament } from "@/lib/auction-db";
 import { prisma } from "@/lib/prisma";
@@ -38,6 +39,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           data: { tournamentId: id, playerId, category, basePrice, orderIndex: count }
         })
   ]);
+
+  await writeAuditLog({
+    action: existingLot ? "UPDATE" : "CREATE",
+    entityType: "TournamentPlayer",
+    entityId: playerId,
+    tournamentId: id,
+    summary: `${existingLot ? "Updated" : "Added"} player in category ${category}`,
+    details: { playerId, category, basePrice }
+  });
 
   const tournament = await getActiveTournament(id);
   return NextResponse.json({ tournament }, { status: 201 });

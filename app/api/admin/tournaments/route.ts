@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { writeAuditLog } from "@/lib/audit-log";
 import { getTournamentInclude } from "@/lib/auction-db";
 import { prisma } from "@/lib/prisma";
 
@@ -27,6 +28,15 @@ export async function POST(request: Request) {
       bidIncrement: Number(body.bidIncrement || 1000)
     },
     include: getTournamentInclude()
+  });
+
+  await writeAuditLog({
+    action: "CREATE",
+    entityType: "Tournament",
+    entityId: tournament.id,
+    tournamentId: tournament.id,
+    summary: `Created tournament ${tournament.name}`,
+    details: { name, teamKitty: tournament.teamKitty, bidIncrement: tournament.bidIncrement }
   });
 
   return NextResponse.json({ tournament }, { status: 201 });

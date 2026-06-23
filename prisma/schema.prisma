@@ -117,3 +117,14 @@ model Bid {
   lot       AuctionLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
   team      Team       @relation(fields: [teamId], references: [id])
 }
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  action       String
+  entityType   String
+  entityId     String?
+  tournamentId String?
+  summary      String
+  details      Json?
+  createdAt    DateTime @default(now())
+}

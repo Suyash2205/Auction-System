@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { Gavel, LayoutDashboard, MonitorUp, UserPlus, UsersRound } from "lucide-react";
+import { Gavel, History, LayoutDashboard, MonitorUp, UserPlus, UsersRound } from "lucide-react";
 import { LogoutButton } from "@/components/logout-button";
 
 const links = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/players", label: "Players", icon: UsersRound },
+  { href: "/admin/audit-logs", label: "Logs", icon: History },
   { href: "/register", label: "Register", icon: UserPlus },
   { href: "/admin/auction", label: "Auction", icon: Gavel },
   { href: "/display", label: "Display", icon: MonitorUp }

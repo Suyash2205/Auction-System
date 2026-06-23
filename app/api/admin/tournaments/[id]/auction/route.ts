@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { writeAuditLog } from "@/lib/audit-log";
 import { getActiveTournament } from "@/lib/auction-db";
 import { prisma } from "@/lib/prisma";
 
@@ -33,6 +34,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         data: { status: "LIVE" }
       })
     ]);
+    await writeAuditLog({
+      action: "LIVE",
+      entityType: "AuctionLot",
+      entityId: lotId,
+      tournamentId: id,
+      summary: "Set auction lot live",
+      details: { lotId }
+    });
   }
 
   if (action === "bid") {
@@ -67,6 +76,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         data: { lotId, teamId, amount }
       })
     ]);
+    await writeAuditLog({
+      action: "BID",
+      entityType: "Bid",
+      entityId: lotId,
+      tournamentId: id,
+      summary: `${team.name} bid ${amount}`,
+      details: { lotId, teamId, amount }
+    });
   }
 
   if (action === "sold") {
@@ -89,12 +106,28 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         data: { spent: { increment: latestBid.amount } }
       })
     ]);
+    await writeAuditLog({
+      action: "SOLD",
+      entityType: "AuctionLot",
+      entityId: lotId,
+      tournamentId: id,
+      summary: `Sold player for ${latestBid.amount}`,
+      details: { lotId, teamId: latestBid.teamId, amount: latestBid.amount }
+    });
   }
 
   if (action === "unsold") {
     await prisma.auctionLot.update({
       where: { id: lotId },
       data: { status: "UNSOLD" }
+    });
+    await writeAuditLog({
+      action: "UNSOLD",
+      entityType: "AuctionLot",
+      entityId: lotId,
+      tournamentId: id,
+      summary: "Marked player unsold",
+      details: { lotId }
     });
   }
 

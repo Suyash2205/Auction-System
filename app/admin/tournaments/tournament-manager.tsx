@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Calendar, Plus, Save, UsersRound } from "lucide-react";
+import { Calendar, Pencil, Plus, Save, Trash2, UsersRound } from "lucide-react";
 import { categoryConfig, formatPoints } from "@/lib/demo-data";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -148,6 +148,111 @@ export function TournamentManager() {
     await load();
   }
 
+  async function updateTournament() {
+    if (!selectedTournament) return;
+    const name = window.prompt("Tournament name", selectedTournament.name);
+    if (!name) return;
+    const teamKitty = window.prompt("Team budget", String(selectedTournament.teamKitty));
+    if (!teamKitty) return;
+    const bidIncrement = window.prompt("Bid increment", String(selectedTournament.bidIncrement));
+    if (!bidIncrement) return;
+
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, startsAt: selectedTournament.startsAt, teamKitty, bidIncrement })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not update tournament.");
+      return;
+    }
+    setMessage("Tournament updated.");
+    await load();
+  }
+
+  async function deleteTournament() {
+    if (!selectedTournament || !window.confirm(`Delete ${selectedTournament.name}? This removes its teams, auction lots, and bids.`)) return;
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not delete tournament.");
+      return;
+    }
+    setSelectedTournamentId("");
+    setMessage("Tournament deleted.");
+    await load();
+  }
+
+  async function updateTeam(team: Team) {
+    if (!selectedTournament) return;
+    const name = window.prompt("Team name", team.name);
+    if (!name) return;
+    const ownerName = window.prompt("Owner name", team.ownerName);
+    if (!ownerName) return;
+    const ownerPhone = window.prompt("Owner phone", team.ownerPhone ?? "") ?? "";
+    const budget = window.prompt("Team budget", String(team.budget));
+    if (!budget) return;
+
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/teams/${team.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, ownerName, ownerPhone, budget, color: team.color })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not update team.");
+      return;
+    }
+    setMessage("Team updated.");
+    await load();
+  }
+
+  async function deleteTeam(team: Team) {
+    if (!selectedTournament || !window.confirm(`Delete ${team.name}? Teams with bids cannot be deleted.`)) return;
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/teams/${team.id}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not delete team.");
+      return;
+    }
+    setMessage("Team deleted.");
+    await load();
+  }
+
+  async function updateTournamentPlayer(lot: Lot) {
+    if (!selectedTournament) return;
+    const category = window.prompt("Category: M1, F1, M2, M3, or M4", lot.category) as PlayerCategory | null;
+    if (!category) return;
+    const basePrice = window.prompt("Base price", String(lot.basePrice));
+    if (!basePrice) return;
+
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/players/${lot.playerId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ category, basePrice })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not update player.");
+      return;
+    }
+    setMessage("Tournament player updated.");
+    await load();
+  }
+
+  async function removeTournamentPlayer(lot: Lot) {
+    if (!selectedTournament || !window.confirm(`Remove ${lot.player.name} from this tournament?`)) return;
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/players/${lot.playerId}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not remove player.");
+      return;
+    }
+    setMessage("Player removed from tournament.");
+    await load();
+  }
+
   const availablePlayers = players.filter((player) => !selectedTournament?.lots.some((lot) => lot.playerId === player.id));
 
   return (
@@ -184,7 +289,19 @@ export function TournamentManager() {
           </form>
 
           <section className="rounded-lg border border-court-ink/10 bg-white p-5 shadow-sm">
-            <h2 className="text-xl font-semibold">Active Tournament</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xl font-semibold">Active Tournament</h2>
+              {selectedTournament ? (
+                <div className="flex gap-2">
+                  <button onClick={updateTournament} className="grid h-10 w-10 place-items-center rounded-md border border-court-ink/15" title="Edit tournament" type="button">
+                    <Pencil size={16} />
+                  </button>
+                  <button onClick={deleteTournament} className="grid h-10 w-10 place-items-center rounded-md border border-court-clay/30 text-court-clay" title="Delete tournament" type="button">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <select
               value={selectedTournament?.id ?? ""}
               onChange={(event) => setSelectedTournamentId(event.target.value)}
@@ -215,12 +332,22 @@ export function TournamentManager() {
             <h2 className="text-xl font-semibold">Teams</h2>
             <div className="mt-4 grid gap-3">
               {selectedTournament?.teams.map((team) => (
-                <div key={team.id} className="flex items-center justify-between rounded-lg border border-court-ink/10 p-4">
-                  <span className="flex items-center gap-3 font-semibold">
-                    <span className="h-4 w-4 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
-                    {team.name}
-                  </span>
-                  <span className="text-sm text-court-ink/60">{team.ownerName} · {formatPoints(team.budget - team.spent)} left</span>
+                <div key={team.id} className="flex items-center justify-between gap-3 rounded-lg border border-court-ink/10 p-4">
+                  <div>
+                    <span className="flex items-center gap-3 font-semibold">
+                      <span className="h-4 w-4 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
+                      {team.name}
+                    </span>
+                    <span className="mt-1 block text-sm text-court-ink/60">{team.ownerName} · {formatPoints(team.budget - team.spent)} left</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => updateTeam(team)} className="grid h-9 w-9 place-items-center rounded-md border border-court-ink/15" title="Edit team" type="button">
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => deleteTeam(team)} className="grid h-9 w-9 place-items-center rounded-md border border-court-clay/30 text-court-clay" title="Delete team" type="button">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
               )) ?? null}
             </div>
@@ -249,8 +376,20 @@ export function TournamentManager() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {selectedTournament?.lots.map((lot) => (
                 <div key={lot.id} className="rounded-lg border border-court-ink/10 p-4">
-                  <p className="font-bold">{lot.player.name}</p>
-                  <p className="mt-1 text-sm text-court-ink/60">{lot.category} · Base {formatPoints(lot.basePrice)} · {lot.status}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-bold">{lot.player.name}</p>
+                      <p className="mt-1 text-sm text-court-ink/60">{lot.category} · Base {formatPoints(lot.basePrice)} · {lot.status}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => updateTournamentPlayer(lot)} className="grid h-9 w-9 place-items-center rounded-md border border-court-ink/15" title="Edit category/base price" type="button">
+                        <Pencil size={15} />
+                      </button>
+                      <button onClick={() => removeTournamentPlayer(lot)} className="grid h-9 w-9 place-items-center rounded-md border border-court-clay/30 text-court-clay" title="Remove from tournament" type="button">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )) ?? null}
             </div>
