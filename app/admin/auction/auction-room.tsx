@@ -530,6 +530,19 @@ export function AuctionRoom() {
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">{categoryConfig[category].label}</p>
           <h2 className="mt-2 text-3xl font-bold">{category} Category Completed</h2>
           <p className="mt-2 text-court-ink/60">Select another category above. A random open player from that category will go live automatically.</p>
+          <div className="mx-auto mt-6 max-w-3xl rounded-lg bg-[#f6fbf7] p-4 text-left">
+            <h3 className="text-lg font-semibold">Re-auction Sold Players</h3>
+            <div className="mt-3 grid gap-2">
+              {categoryLots.filter((lot) => lot.status === "SOLD").length ? categoryLots.filter((lot) => lot.status === "SOLD").map((lot) => (
+                <div key={lot.id} className="flex flex-col gap-3 rounded-md bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <span className="font-semibold">{lot.player.name} · {formatPoints(lot.soldAmount ?? 0)} pts</span>
+                  <button onClick={() => unsellPlayer(lot)} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-3 py-2 text-sm font-bold">
+                    <RotateCcw size={15} /> Re-auction
+                  </button>
+                </div>
+              )) : <p className="rounded-md bg-white px-4 py-3 text-sm text-court-ink/55">No sold players in this category yet.</p>}
+            </div>
+          </div>
         </section>
       ) : (
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
