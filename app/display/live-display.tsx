@@ -69,7 +69,7 @@ export function LiveDisplay() {
       }
       setTournament(data.tournament);
       setLot(data.liveLot);
-      if (data.liveLot) setCompletedCategory(null);
+      setCompletedCategory(data.completedCategory ?? null);
     } finally {
       isLoadingRef.current = false;
     }

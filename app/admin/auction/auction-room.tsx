@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
-import { getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
+import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
 import { supabase } from "@/lib/supabase";
 import type { PlayerCategory } from "@/lib/types";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -103,6 +103,7 @@ export function AuctionRoom() {
   const [selectedTournamentId, setSelectedTournamentId] = useState("");
   const [category, setCategory] = useState<PlayerCategory>("M1");
   const [customTeamId, setCustomTeamId] = useState("");
+  const [ownerTeamId, setOwnerTeamId] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [error, setError] = useState("");
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
@@ -141,6 +142,7 @@ export function AuctionRoom() {
     setTournaments(data.tournaments ?? []);
     setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
     setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
+    setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
   }
 
   useEffect(() => {
@@ -315,9 +317,17 @@ export function AuctionRoom() {
       return;
     }
     if (data.tournament) {
+      const responseLiveLot = data.tournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
       setTournaments((current) => current.map((tournament) => (tournament.id === data.tournament.id ? data.tournament : tournament)));
       setSelectedTournamentId(data.tournament.id);
       setCustomTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
+      setOwnerTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
+      publishInstantDisplay(
+        data.tournament,
+        responseLiveLot,
+        realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
+        responseLiveLot ? null : (actionCategory as PlayerCategory)
+      );
     }
   }
 
@@ -327,6 +337,10 @@ export function AuctionRoom() {
       return;
     }
     const team = selectedTournament?.teams.find((item) => item.id === teamId);
+    if (team && currentLot && selectedTournament && !canTeamBidInCategory(selectedTournament.lots, team.id, currentLot.category)) {
+      setError(`${team.name} already has the required player count for ${currentLot.category}.`);
+      return;
+    }
     const maxAllowedBid = team && currentLot ? getMaxAllowedBid(team, selectedTournament.lots, currentLot.category) : 0;
     if (team && amount > maxAllowedBid) {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
@@ -343,6 +357,10 @@ export function AuctionRoom() {
       return;
     }
     const team = selectedTournament?.teams.find((item) => item.id === customTeamId);
+    if (team && currentLot && selectedTournament && !canTeamBidInCategory(selectedTournament.lots, team.id, currentLot.category)) {
+      setError(`${team.name} already has the required player count for ${currentLot.category}.`);
+      return;
+    }
     const maxAllowedBid = team && currentLot && selectedTournament ? getMaxAllowedBid(team, selectedTournament.lots, currentLot.category) : 0;
     if (team && amount > maxAllowedBid) {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
@@ -355,6 +373,16 @@ export function AuctionRoom() {
   async function skipPlayer() {
     if (!currentLot) return;
     await action({ action: "skip" });
+  }
+
+  async function markOwnerPlayer() {
+    if (!currentLot || !ownerTeamId) return;
+    const team = selectedTournament?.teams.find((item) => item.id === ownerTeamId);
+    if (team && selectedTournament && !canTeamBidInCategory(selectedTournament.lots, team.id, currentLot.category)) {
+      setError(`${team.name} already has the required player count for ${currentLot.category}.`);
+      return;
+    }
+    await action({ action: "owner", teamId: ownerTeamId });
   }
 
   async function unsellPlayer(lot: Lot) {
@@ -469,20 +497,48 @@ export function AuctionRoom() {
               </div>
             </div>
 
+            <div className="mt-5 rounded-lg border border-court-ink/10 bg-[#f6fbf7] p-4">
+              <h2 className="text-lg font-semibold">Owner Player</h2>
+              <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                <select value={ownerTeamId} onChange={(event) => setOwnerTeamId(event.target.value)} className="focus-ring h-12 rounded-md border border-court-ink/15 bg-white px-3">
+                  {selectedTournament.teams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={markOwnerPlayer}
+                  disabled={
+                    currentLot.status !== "LIVE" ||
+                    !ownerTeamId ||
+                    !canTeamBidInCategory(selectedTournament.lots, ownerTeamId, currentLot.category)
+                  }
+                  className="inline-flex h-12 items-center justify-center rounded-md bg-court-green px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Mark Owner
+                </button>
+              </div>
+              <p className="mt-3 text-sm text-court-ink/55">
+                Owner players wait until this category completes, then sell to their own team at the category average.
+              </p>
+            </div>
+
             <div className="mt-5">
               <h2 className="text-lg font-semibold">Quick Bid</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {selectedTournament.teams.map((team) => {
+                  const canBidInCategory = canTeamBidInCategory(selectedTournament.lots, team.id, currentLot.category);
                   const maxAllowedBid = getMaxAllowedBid(team, selectedTournament.lots, currentLot.category);
                   const reserveAfterThisCategory = getRequiredReserve(selectedTournament.lots, team.id, currentLot.category);
 
                   return (
-                    <button key={team.id} disabled={!openCurrentLot || defaultNextAmount > maxAllowedBid} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30 disabled:cursor-not-allowed disabled:opacity-40">
+                    <button key={team.id} disabled={!openCurrentLot || !canBidInCategory || defaultNextAmount > maxAllowedBid} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30 disabled:cursor-not-allowed disabled:opacity-40">
                       <span className="flex items-center gap-2 font-semibold">
                         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
                         {team.name}
                       </span>
-                      <span className="mt-2 block text-sm text-court-ink/55">Bid {formatPoints(defaultNextAmount)} · max {formatPoints(maxAllowedBid)}</span>
+                      <span className="mt-2 block text-sm text-court-ink/55">
+                        {canBidInCategory ? `Bid ${formatPoints(defaultNextAmount)} · max ${formatPoints(maxAllowedBid)}` : `Already has ${currentLot.category} player`}
+                      </span>
                       <span className="mt-1 block text-xs text-court-ink/45">{formatPoints(team.budget - team.spent)} left · {formatPoints(reserveAfterThisCategory)} reserved</span>
                     </button>
                   );

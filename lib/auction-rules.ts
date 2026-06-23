@@ -16,7 +16,7 @@ type TeamBudget = {
 export function getRequiredReserve(lots: SoldLot[], teamId: string, currentCategory?: PlayerCategory) {
   return Object.entries(categoryConfig).reduce((total, [category, config]) => {
     const typedCategory = category as PlayerCategory;
-    const soldCount = lots.filter((lot) => lot.category === typedCategory && lot.status === "SOLD" && lot.soldToTeamId === teamId).length;
+    const soldCount = getCategoryOwnedCount(lots, teamId, typedCategory);
     const currentLotWouldFillSlot = currentCategory === typedCategory ? 1 : 0;
     const remainingSlots = Math.max(config.required - soldCount - currentLotWouldFillSlot, 0);
 
@@ -26,4 +26,14 @@ export function getRequiredReserve(lots: SoldLot[], teamId: string, currentCateg
 
 export function getMaxAllowedBid(team: TeamBudget, lots: SoldLot[], currentCategory: PlayerCategory) {
   return Math.max(team.budget - team.spent - getRequiredReserve(lots, team.id, currentCategory), 0);
+}
+
+export function getCategoryOwnedCount(lots: SoldLot[], teamId: string, category: PlayerCategory) {
+  return lots.filter(
+    (lot) => lot.category === category && ["SOLD", "UNSOLD"].includes(lot.status) && lot.soldToTeamId === teamId
+  ).length;
+}
+
+export function canTeamBidInCategory(lots: SoldLot[], teamId: string, category: PlayerCategory) {
+  return getCategoryOwnedCount(lots, teamId, category) < categoryConfig[category].required;
 }

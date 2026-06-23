@@ -11,9 +11,14 @@ export async function GET() {
   }
 
   const liveLot = tournament.lots.find((lot) => lot.status === "LIVE") ?? null;
+  const completedCategory = liveLot
+    ? null
+    : tournament.lots
+        .filter((lot) => !["QUEUED", "LIVE", "SKIPPED"].includes(lot.status))
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0]?.category ?? null;
 
   return NextResponse.json(
-    { tournament, liveLot },
+    { tournament, liveLot, completedCategory },
     { headers: { "cache-control": "no-store" } }
   );
 }
