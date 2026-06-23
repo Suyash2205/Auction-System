@@ -73,7 +73,13 @@ export function LiveDisplay() {
   const isLoadingRef = useRef(false);
   const lastInstantStateAtRef = useRef(0);
   const seenSaleIdsRef = useRef<Set<string>>(new Set());
+  const queuedSaleIdsRef = useRef<Set<string>>(new Set());
   const latestBidByLotRef = useRef<Record<string, number>>({});
+  const currentLotRef = useRef<Lot | null>(null);
+
+  useEffect(() => {
+    currentLotRef.current = lot;
+  }, [lot]);
 
   const guardLiveLot = useCallback((incomingLot: Lot | null) => {
     if (!incomingLot) return incomingLot;
@@ -85,8 +91,25 @@ export function LiveDisplay() {
       return incomingLot;
     }
 
-    return lot?.id === incomingLot.id ? { ...incomingLot, bids: lot.bids } : incomingLot;
-  }, [lot]);
+    return currentLotRef.current?.id === incomingLot.id ? { ...incomingLot, bids: currentLotRef.current.bids } : incomingLot;
+  }, []);
+
+  const queueSaleEvents = useCallback((saleEvents: SaleEvent[]) => {
+    if (!saleEvents.length) return;
+
+    setSaleQueue((currentQueue) => {
+      const nextQueue = [...currentQueue];
+
+      saleEvents.forEach((saleEvent) => {
+        if (seenSaleIdsRef.current.has(saleEvent.id) || queuedSaleIdsRef.current.has(saleEvent.id)) return;
+        seenSaleIdsRef.current.add(saleEvent.id);
+        queuedSaleIdsRef.current.add(saleEvent.id);
+        nextQueue.push(saleEvent);
+      });
+
+      return nextQueue;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     if (isLoadingRef.current) return;
@@ -106,7 +129,7 @@ export function LiveDisplay() {
     } finally {
       isLoadingRef.current = false;
     }
-  }, []);
+  }, [guardLiveLot]);
 
   useEffect(() => {
     load();
@@ -122,16 +145,7 @@ export function LiveDisplay() {
       setLot(guardLiveLot(data.liveLot ?? null));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
-      if (data.saleEvents?.length) {
-        const freshSaleEvents = data.saleEvents.filter((saleEvent) => {
-          if (seenSaleIdsRef.current.has(saleEvent.id)) return false;
-          seenSaleIdsRef.current.add(saleEvent.id);
-          return true;
-        });
-        if (freshSaleEvents.length) {
-          setSaleQueue((current) => [...current, ...freshSaleEvents]);
-        }
-      }
+      queueSaleEvents(data.saleEvents ?? []);
     };
 
     try {
@@ -178,7 +192,7 @@ export function LiveDisplay() {
         supabase?.removeChannel(supabaseChannel);
       }
     };
-  }, [load]);
+  }, [load, guardLiveLot, queueSaleEvents]);
 
   useEffect(() => {
     if (activeSale || !saleQueue.length) return;
@@ -191,7 +205,10 @@ export function LiveDisplay() {
   useEffect(() => {
     if (!activeSale) return;
 
-    const timeout = window.setTimeout(() => setActiveSale(null), 2000);
+    const timeout = window.setTimeout(() => {
+      queuedSaleIdsRef.current.delete(activeSale.id);
+      setActiveSale(null);
+    }, 2000);
 
     return () => window.clearTimeout(timeout);
   }, [activeSale]);
