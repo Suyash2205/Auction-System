@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Gavel, ShieldCheck } from "lucide-react";
 import { categoryConfig, formatPoints } from "@/lib/demo-data";
 import { supabase } from "@/lib/supabase";
@@ -38,18 +38,26 @@ type Tournament = {
 export function LiveDisplay() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [lot, setLot] = useState<Lot | null>(null);
+  const isLoadingRef = useRef(false);
 
-  async function load() {
-    const response = await fetch("/api/public/display", { cache: "no-store" });
-    const data = await response.json();
-    setTournament(data.tournament);
-    setLot(data.liveLot);
-  }
+  const load = useCallback(async () => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
+
+    try {
+      const response = await fetch("/api/public/display", { cache: "no-store" });
+      const data = await response.json();
+      setTournament(data.tournament);
+      setLot(data.liveLot);
+    } finally {
+      isLoadingRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     load();
 
-    const interval = window.setInterval(load, 5000);
+    const interval = window.setInterval(load, 500);
     const channel = supabase
       ?.channel("live-auction-display")
       .on("postgres_changes", { event: "*", schema: "public", table: "AuctionLot" }, load)
@@ -63,7 +71,7 @@ export function LiveDisplay() {
         supabase?.removeChannel(channel);
       }
     };
-  }, []);
+  }, [load]);
 
   const bid = lot?.bids.at(-1);
   const team = bid?.team;
