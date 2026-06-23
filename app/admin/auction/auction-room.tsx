@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
+import { getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
 import { supabase } from "@/lib/supabase";
 import type { PlayerCategory } from "@/lib/types";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -205,20 +206,27 @@ export function AuctionRoom() {
         }
       }
 
-      if (actionType === "sold") {
-        const latest = lots[targetIndex].bids.at(-1);
-        lots[targetIndex] = {
-          ...lots[targetIndex],
-          status: "SOLD",
-          soldToTeamId: latest?.teamId ?? lots[targetIndex].soldToTeamId,
-          soldAmount: latest?.amount ?? lots[targetIndex].soldAmount
-        };
-        if (nextOpenLot) {
-          const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
-          lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
-          optimisticLiveLot = lots[nextIndex];
+        if (actionType === "sold") {
+          const latest = lots[targetIndex].bids.at(-1);
+          lots[targetIndex] = {
+            ...lots[targetIndex],
+            status: "SOLD",
+            soldToTeamId: latest?.teamId ?? lots[targetIndex].soldToTeamId,
+            soldAmount: latest?.amount ?? lots[targetIndex].soldAmount
+          };
+          const teamIndex = tournament.teams.findIndex((team) => team.id === latest?.teamId);
+          const teams = tournament.teams.map((team) => ({ ...team }));
+          if (teamIndex >= 0 && latest) {
+            teams[teamIndex] = { ...teams[teamIndex], spent: teams[teamIndex].spent + latest.amount };
+          }
+          if (nextOpenLot) {
+            const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
+            lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
+            optimisticLiveLot = lots[nextIndex];
+          }
+          optimisticTournament = { ...tournament, teams, lots };
+          return optimisticTournament;
         }
-      }
 
       if (actionType === "skip" || actionType === "unsold") {
         lots[targetIndex] = {
@@ -234,6 +242,11 @@ export function AuctionRoom() {
       }
 
       if (actionType === "unsell") {
+        const teams = tournament.teams.map((team) =>
+          team.id === lots[targetIndex].soldToTeamId
+            ? { ...team, spent: Math.max(team.spent - (lots[targetIndex].soldAmount ?? 0), 0) }
+            : team
+        );
         lots[targetIndex] = {
           ...lots[targetIndex],
           status: "LIVE",
@@ -242,6 +255,8 @@ export function AuctionRoom() {
           bids: []
         };
         optimisticLiveLot = lots[targetIndex];
+        optimisticTournament = { ...tournament, teams, lots };
+        return optimisticTournament;
       }
 
       optimisticTournament = { ...tournament, lots };
@@ -290,6 +305,12 @@ export function AuctionRoom() {
       setError("This player is already closed. Use Re-auction if you need to restart.");
       return;
     }
+    const team = selectedTournament?.teams.find((item) => item.id === teamId);
+    const maxAllowedBid = team && currentLot ? getMaxAllowedBid(team, selectedTournament.lots, currentLot.category) : 0;
+    if (team && amount > maxAllowedBid) {
+      setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
+      return;
+    }
     await action({ action: "bid", teamId, amount });
   }
 
@@ -298,6 +319,12 @@ export function AuctionRoom() {
     const amount = Number(customAmount);
     if (!amount || amount < defaultNextAmount) {
       setError(`Bid must be at least ${formatPoints(defaultNextAmount)} pts.`);
+      return;
+    }
+    const team = selectedTournament?.teams.find((item) => item.id === customTeamId);
+    const maxAllowedBid = team && currentLot && selectedTournament ? getMaxAllowedBid(team, selectedTournament.lots, currentLot.category) : 0;
+    if (team && amount > maxAllowedBid) {
+      setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
       return;
     }
     await addBid(customTeamId, amount);
@@ -411,15 +438,21 @@ export function AuctionRoom() {
             <div className="mt-5">
               <h2 className="text-lg font-semibold">Quick Bid</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {selectedTournament.teams.map((team) => (
-                  <button key={team.id} disabled={!openCurrentLot} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30 disabled:cursor-not-allowed disabled:opacity-40">
-                    <span className="flex items-center gap-2 font-semibold">
-                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
-                      {team.name}
-                    </span>
-                    <span className="mt-2 block text-sm text-court-ink/55">Bid {formatPoints(defaultNextAmount)} · {formatPoints(team.budget - team.spent)} left</span>
-                  </button>
-                ))}
+                {selectedTournament.teams.map((team) => {
+                  const maxAllowedBid = getMaxAllowedBid(team, selectedTournament.lots, currentLot.category);
+                  const reserveAfterThisCategory = getRequiredReserve(selectedTournament.lots, team.id, currentLot.category);
+
+                  return (
+                    <button key={team.id} disabled={!openCurrentLot || defaultNextAmount > maxAllowedBid} onClick={() => addBid(team.id, defaultNextAmount)} className="rounded-lg border border-court-ink/10 p-4 text-left transition hover:border-court-green hover:bg-court-mint/30 disabled:cursor-not-allowed disabled:opacity-40">
+                      <span className="flex items-center gap-2 font-semibold">
+                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
+                        {team.name}
+                      </span>
+                      <span className="mt-2 block text-sm text-court-ink/55">Bid {formatPoints(defaultNextAmount)} · max {formatPoints(maxAllowedBid)}</span>
+                      <span className="mt-1 block text-xs text-court-ink/45">{formatPoints(team.budget - team.spent)} left · {formatPoints(reserveAfterThisCategory)} reserved</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -434,7 +467,12 @@ export function AuctionRoom() {
                 <input value={customAmount} onChange={(event) => setCustomAmount(event.target.value)} min={defaultNextAmount} type="number" step={selectedTournament.bidIncrement} placeholder={`Eg. ${defaultNextAmount}`} className="focus-ring h-12 rounded-md border border-court-ink/15 bg-white px-3" />
                 <button disabled={!openCurrentLot} className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-court-ink px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Gavel size={17} /> Add Bid</button>
               </div>
-              <p className="mt-3 text-sm text-court-ink/55">Minimum valid custom bid is {formatPoints(defaultNextAmount)} pts.</p>
+              <p className="mt-3 text-sm text-court-ink/55">
+                Minimum valid custom bid is {formatPoints(defaultNextAmount)} pts.
+                {selectedTournament.teams.find((team) => team.id === customTeamId)
+                  ? ` Selected team max is ${formatPoints(getMaxAllowedBid(selectedTournament.teams.find((team) => team.id === customTeamId)!, selectedTournament.lots, currentLot.category))} pts.`
+                  : null}
+              </p>
             </form>
 
             <div className="mt-6 rounded-lg bg-[#f6fbf7] p-4">

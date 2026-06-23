@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { writeAuditLog } from "@/lib/audit-log";
 import { getActiveTournament } from "@/lib/auction-db";
+import { getMaxAllowedBid } from "@/lib/auction-rules";
 import { prisma } from "@/lib/prisma";
 
 type CategoryLot = {
@@ -120,6 +121,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     if (amount > team.budget - team.spent) {
       return NextResponse.json({ error: "Bid is higher than this team's remaining purse." }, { status: 400 });
+    }
+
+    const maxAllowedBid = getMaxAllowedBid(team, categoryLots, lot.category);
+    if (amount > maxAllowedBid) {
+      return NextResponse.json(
+        { error: `${team.name} can bid up to ${maxAllowedBid}. Required category slots must stay reserved.` },
+        { status: 400 }
+      );
     }
 
     await prisma.$transaction([
