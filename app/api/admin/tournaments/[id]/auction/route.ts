@@ -10,13 +10,18 @@ type CategoryLot = {
   status: string;
 };
 
-function findNextOpenLot(categoryLots: CategoryLot[], currentLotId: string) {
-  const currentIndex = categoryLots.findIndex((item) => item.id === currentLotId);
-  const queuedAfterCurrent = categoryLots.slice(currentIndex + 1).find((item) => item.status === "QUEUED");
-  const queuedFromStart = categoryLots.find((item) => item.status === "QUEUED" && item.id !== currentLotId);
-  const skippedFromStart = categoryLots.find((item) => item.status === "SKIPPED" && item.id !== currentLotId);
+type BudgetLot = {
+  category: "M1" | "M2" | "M3" | "M4" | "F1";
+  status: string;
+  soldToTeamId: string | null;
+};
 
-  return queuedAfterCurrent ?? queuedFromStart ?? skippedFromStart ?? null;
+function findNextOpenLot(categoryLots: CategoryLot[], currentLotId: string) {
+  const queuedLots = categoryLots.filter((item) => item.status === "QUEUED" && item.id !== currentLotId);
+  const skippedLots = categoryLots.filter((item) => item.status === "SKIPPED" && item.id !== currentLotId);
+  const nextPool = queuedLots.length ? queuedLots : skippedLots;
+
+  return nextPool.length ? nextPool[Math.floor(Math.random() * nextPool.length)] : null;
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -44,6 +49,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     where: { tournamentId: id, category: lot.category },
     orderBy: { orderIndex: "asc" },
     include: { bids: { orderBy: { createdAt: "asc" } } }
+  });
+  const budgetLots: BudgetLot[] = await prisma.auctionLot.findMany({
+    where: { tournamentId: id },
+    select: { category: true, status: true, soldToTeamId: true }
   });
   const maxOrderIndex = Math.max(...categoryLots.map((item) => item.orderIndex), 0);
 
@@ -123,7 +132,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "Bid is higher than this team's remaining purse." }, { status: 400 });
     }
 
-    const maxAllowedBid = getMaxAllowedBid(team, categoryLots, lot.category);
+    const maxAllowedBid = getMaxAllowedBid(team, budgetLots, lot.category);
     if (amount > maxAllowedBid) {
       return NextResponse.json(
         { error: `${team.name} can bid up to ${maxAllowedBid}. Required category slots must stay reserved.` },

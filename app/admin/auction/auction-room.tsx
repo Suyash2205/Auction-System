@@ -61,24 +61,27 @@ const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
 const SUPABASE_BROADCAST_EVENT = "state";
 
 function getNextOpenLot(lots: Lot[], currentLotId: string) {
-  const currentIndex = lots.findIndex((lot) => lot.id === currentLotId);
+  const queuedLots = lots.filter((lot) => lot.status === "QUEUED" && lot.id !== currentLotId);
+  const skippedLots = lots.filter((lot) => lot.status === "SKIPPED" && lot.id !== currentLotId);
+  const nextPool = queuedLots.length ? queuedLots : skippedLots;
 
-  return (
-    lots.slice(currentIndex + 1).find((lot) => lot.status === "QUEUED") ??
-    lots.find((lot) => lot.status === "QUEUED" && lot.id !== currentLotId) ??
-    lots.find((lot) => lot.status === "SKIPPED" && lot.id !== currentLotId) ??
-    null
-  );
+  return nextPool.length ? nextPool[Math.floor(Math.random() * nextPool.length)] : null;
 }
 
-function publishInstantDisplay(tournament: Tournament, liveLot: Lot | null, realtimeChannel: RealtimeChannel | null) {
+function publishInstantDisplay(tournament: Tournament, liveLot: Lot | null, realtimeChannel: RealtimeChannel | null, completedCategory: PlayerCategory | null = null) {
   const payload = {
     sentAt: Date.now(),
     tournament: {
       name: tournament.name,
-      teams: tournament.teams
+      teams: tournament.teams,
+      lots: tournament.lots.map((lot) => ({
+        category: lot.category,
+        status: lot.status,
+        soldToTeamId: lot.soldToTeamId
+      }))
     },
-    liveLot
+    liveLot,
+    completedCategory
   };
 
   try {
@@ -106,6 +109,7 @@ export function AuctionRoom() {
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
   const pendingDisplayLotRef = useRef<Lot | null>(null);
+  const pendingCompletedCategoryRef = useRef<PlayerCategory | null>(null);
   const latestActionRequestRef = useRef(0);
 
   const selectedTournament = useMemo(
@@ -113,6 +117,8 @@ export function AuctionRoom() {
     [selectedTournamentId, tournaments]
   );
   const categoryLots = selectedTournament?.lots.filter((lot) => lot.category === category) ?? [];
+  const categoryHasOpenLots = categoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
+  const categoryIsCompleted = Boolean(selectedTournament && categoryLots.length > 0 && !categoryHasOpenLots);
   const activeCategory = (selectedTournament?.lots.find((lot) => lot.status === "LIVE")?.category ?? category) as PlayerCategory;
   const activeCategoryLots = selectedTournament?.lots.filter((lot) => lot.category === activeCategory) ?? [];
   const activeCategoryIsOpen = activeCategoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
@@ -152,9 +158,10 @@ export function AuctionRoom() {
     channel.subscribe((status) => {
       realtimeReadyRef.current = status === "SUBSCRIBED";
       if (status === "SUBSCRIBED" && pendingDisplayPayloadRef.current) {
-        publishInstantDisplay(pendingDisplayPayloadRef.current, pendingDisplayLotRef.current, channel);
+        publishInstantDisplay(pendingDisplayPayloadRef.current, pendingDisplayLotRef.current, channel, pendingCompletedCategoryRef.current);
         pendingDisplayPayloadRef.current = null;
         pendingDisplayLotRef.current = null;
+        pendingCompletedCategoryRef.current = null;
       }
     });
 
@@ -168,6 +175,7 @@ export function AuctionRoom() {
   function applyOptimisticAction(payload: Record<string, unknown>, targetLotId: string) {
     let optimisticLiveLot: Lot | null = null;
     let optimisticTournament: Tournament | null = null;
+    let optimisticCompletedCategory: PlayerCategory | null = null;
     const nextTournaments = tournaments.map((tournament) => {
       if (tournament.id !== selectedTournament?.id) return tournament;
 
@@ -183,6 +191,16 @@ export function AuctionRoom() {
       const categoryLots = lots.filter((lot) => lot.category === targetLot.category).sort((a, b) => a.orderIndex - b.orderIndex);
       const nextOpenLot = getNextOpenLot(categoryLots, targetLotId);
       const maxOrderIndex = Math.max(...categoryLots.map((lot) => lot.orderIndex), 0);
+
+      if (actionType === "live") {
+        lots.forEach((lot, index) => {
+          if (lot.status === "LIVE") {
+            lots[index] = { ...lot, status: "QUEUED" };
+          }
+        });
+        lots[targetIndex] = { ...lots[targetIndex], status: "LIVE" };
+        optimisticLiveLot = lots[targetIndex];
+      }
 
       if (actionType === "bid") {
         const team = tournament.teams.find((item) => item.id === payload.teamId);
@@ -223,6 +241,8 @@ export function AuctionRoom() {
             const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
             lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
             optimisticLiveLot = lots[nextIndex];
+          } else {
+            optimisticCompletedCategory = lots[targetIndex].category;
           }
           optimisticTournament = { ...tournament, teams, lots };
           return optimisticTournament;
@@ -266,15 +286,16 @@ export function AuctionRoom() {
     setTournaments(nextTournaments);
 
     if (optimisticTournament) {
-      publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeReadyRef.current ? realtimeBroadcastRef.current : null);
+      publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeReadyRef.current ? realtimeBroadcastRef.current : null, optimisticCompletedCategory);
       if (!realtimeReadyRef.current) {
         pendingDisplayPayloadRef.current = optimisticTournament;
         pendingDisplayLotRef.current = optimisticLiveLot;
+        pendingCompletedCategoryRef.current = optimisticCompletedCategory;
       }
     }
   }
 
-  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id) {
+  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = category) {
     if (!selectedTournament || !targetLotId) return;
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
@@ -283,7 +304,7 @@ export function AuctionRoom() {
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ lotId: targetLotId, currentCategory: category, ...payload })
+      body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, ...payload })
     });
     const data = await response.json();
     if (requestId !== latestActionRequestRef.current) return;
@@ -347,6 +368,13 @@ export function AuctionRoom() {
     }
     setCategory(nextCategory);
     setError("");
+
+    const openLots = selectedTournament?.lots.filter((lot) => lot.category === nextCategory && ["QUEUED", "SKIPPED"].includes(lot.status)) ?? [];
+    const alreadyLive = selectedTournament?.lots.find((lot) => lot.category === nextCategory && lot.status === "LIVE");
+    if (!alreadyLive && openLots.length) {
+      const randomLot = openLots[Math.floor(Math.random() * openLots.length)];
+      void action({ action: "live" }, randomLot.id, nextCategory);
+    }
   }
 
   return (
@@ -393,6 +421,12 @@ export function AuctionRoom() {
         <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
           <h2 className="text-2xl font-semibold">No auction lots ready</h2>
           <p className="mt-2 text-court-ink/60">Create a tournament and add players first.</p>
+        </section>
+      ) : categoryIsCompleted ? (
+        <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">{categoryConfig[category].label}</p>
+          <h2 className="mt-2 text-3xl font-bold">{category} Category Completed</h2>
+          <p className="mt-2 text-court-ink/60">Select another category above. A random open player from that category will go live automatically.</p>
         </section>
       ) : (
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">

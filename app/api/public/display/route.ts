@@ -10,11 +10,7 @@ export async function GET() {
     return NextResponse.json({ tournament: null }, { headers: { "cache-control": "no-store" } });
   }
 
-  const liveLot =
-    tournament.lots.find((lot) => lot.status === "LIVE") ??
-    tournament.lots.find((lot) => lot.status === "QUEUED") ??
-    tournament.lots[0] ??
-    null;
+  const liveLot = tournament.lots.find((lot) => lot.status === "LIVE") ?? null;
 
   return NextResponse.json(
     { tournament, liveLot },

@@ -52,6 +52,7 @@ const INSTANT_SERVER_GRACE_MS = 2_500;
 export function LiveDisplay() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [lot, setLot] = useState<Lot | null>(null);
+  const [completedCategory, setCompletedCategory] = useState<PlayerCategory | null>(null);
   const isLoadingRef = useRef(false);
   const lastInstantStateAtRef = useRef(0);
 
@@ -68,6 +69,7 @@ export function LiveDisplay() {
       }
       setTournament(data.tournament);
       setLot(data.liveLot);
+      if (data.liveLot) setCompletedCategory(null);
     } finally {
       isLoadingRef.current = false;
     }
@@ -78,13 +80,14 @@ export function LiveDisplay() {
 
     const interval = window.setInterval(load, 500);
     const applyInstantState = (value: unknown) => {
-      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null };
+      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null };
 
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
       lastInstantStateAtRef.current = Date.now();
       setTournament(data.tournament ?? null);
       setLot(data.liveLot ?? null);
+      setCompletedCategory(data.completedCategory ?? null);
     };
 
     try {
@@ -136,12 +139,26 @@ export function LiveDisplay() {
   const bid = lot?.bids.at(-1);
   const team = bid?.team;
 
-  if (!tournament || !lot) {
+  if (!tournament) {
     return (
       <main className="grid min-h-screen place-items-center bg-court-ink text-white">
         <div className="text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
           <h1 className="mt-4 text-5xl font-black">Waiting for tournament</h1>
+        </div>
+      </main>
+    );
+  }
+
+  if (!lot) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-court-ink text-white">
+        <div className="text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
+          <h1 className="mt-4 text-6xl font-black">
+            {completedCategory ? `${completedCategory} Category Completed` : "Waiting for category"}
+          </h1>
+          <p className="mt-4 text-2xl text-white/65">Auctioneer selecting next category</p>
         </div>
       </main>
     );
