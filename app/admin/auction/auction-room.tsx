@@ -137,6 +137,7 @@ export function AuctionRoom() {
   const pendingCompletedCategoryRef = useRef<PlayerCategory | null>(null);
   const pendingSaleEventsRef = useRef<SaleEvent[]>([]);
   const latestActionRequestRef = useRef(0);
+  const autoStartedLotRef = useRef("");
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -483,6 +484,15 @@ export function AuctionRoom() {
       void action({ action: "live" }, randomLot.id, nextCategory);
     }
   }
+
+  useEffect(() => {
+    if (!selectedCategory || !currentLot || currentLot.status === "LIVE") return;
+    if (!["QUEUED", "SKIPPED"].includes(currentLot.status)) return;
+    if (autoStartedLotRef.current === currentLot.id) return;
+
+    autoStartedLotRef.current = currentLot.id;
+    void action({ action: "live" }, currentLot.id, selectedCategory);
+  }, [currentLot, selectedCategory]);
 
   useEffect(() => {
     if (eligibleCustomTeams.length && !eligibleCustomTeams.some((team) => team.id === customTeamId)) {
