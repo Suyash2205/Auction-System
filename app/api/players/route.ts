@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 const PHOTO_BUCKET = "player-photos";
+const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
 
 function cleanFileName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-+|-+$/g, "");
@@ -30,6 +33,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const rateLimit = checkRateLimit({ key: `register:${ip}`, limit: 20, windowMs: 60 * 60 * 1000 });
+
+  if (!rateLimit.ok) {
+    return rateLimitResponse(rateLimit.resetAt);
+  }
+
   const formData = await request.formData();
   const name = String(formData.get("name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -42,6 +52,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Name, mobile number, and experience are required." }, { status: 400 });
   }
 
+  if (!/^[0-9+\-\s()]{7,18}$/.test(phone)) {
+    return NextResponse.json({ error: "Enter a valid mobile number." }, { status: 400 });
+  }
+
   const existingPlayer = await prisma.player.findFirst({ where: { phone } });
   if (existingPlayer) {
     return NextResponse.json({ error: "This mobile number is already registered." }, { status: 409 });
@@ -50,6 +64,14 @@ export async function POST(request: Request) {
   let photoUrl: string | undefined;
 
   if (photo instanceof File && photo.size > 0) {
+    if (photo.size > MAX_PHOTO_SIZE) {
+      return NextResponse.json({ error: "Photo must be 5 MB or smaller." }, { status: 400 });
+    }
+
+    if (!ALLOWED_PHOTO_TYPES.has(photo.type)) {
+      return NextResponse.json({ error: "Photo must be JPG, PNG, or WebP." }, { status: 400 });
+    }
+
     const supabase = getSupabaseAdmin();
 
     if (!supabase) {
