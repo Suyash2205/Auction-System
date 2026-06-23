@@ -155,89 +155,88 @@ export function AuctionRoom() {
   function applyOptimisticAction(payload: Record<string, unknown>, targetLotId: string) {
     let optimisticLiveLot: Lot | null = null;
     let optimisticTournament: Tournament | null = null;
+    const nextTournaments = tournaments.map((tournament) => {
+      if (tournament.id !== selectedTournament?.id) return tournament;
 
-    setTournaments((currentTournaments) =>
-      currentTournaments.map((tournament) => {
-        if (tournament.id !== selectedTournament?.id) return tournament;
+      const actionType = String(payload.action ?? "");
+      const targetLot = tournament.lots.find((lot) => lot.id === targetLotId);
+      if (!targetLot) return tournament;
 
-        const actionType = String(payload.action ?? "");
-        const targetLot = tournament.lots.find((lot) => lot.id === targetLotId);
-        if (!targetLot) return tournament;
+      const lots = tournament.lots.map((lot) => ({
+        ...lot,
+        bids: [...lot.bids]
+      }));
+      const targetIndex = lots.findIndex((lot) => lot.id === targetLotId);
+      const categoryLots = lots.filter((lot) => lot.category === targetLot.category).sort((a, b) => a.orderIndex - b.orderIndex);
+      const nextOpenLot = getNextOpenLot(categoryLots, targetLotId);
+      const maxOrderIndex = Math.max(...categoryLots.map((lot) => lot.orderIndex), 0);
 
-        const lots = tournament.lots.map((lot) => ({
-          ...lot,
-          bids: [...lot.bids]
-        }));
-        const targetIndex = lots.findIndex((lot) => lot.id === targetLotId);
-        const categoryLots = lots.filter((lot) => lot.category === targetLot.category).sort((a, b) => a.orderIndex - b.orderIndex);
-        const nextOpenLot = getNextOpenLot(categoryLots, targetLotId);
-        const maxOrderIndex = Math.max(...categoryLots.map((lot) => lot.orderIndex), 0);
-
-        if (actionType === "bid") {
-          const team = tournament.teams.find((item) => item.id === payload.teamId);
-          const amount = Number(payload.amount);
-          if (team && Number.isFinite(amount)) {
-            lots[targetIndex] = {
-              ...lots[targetIndex],
-              status: "LIVE",
-              bids: [
-                ...lots[targetIndex].bids,
-                {
-                  id: `optimistic-${Date.now()}`,
-                  teamId: team.id,
-                  amount,
-                  createdAt: new Date().toISOString(),
-                  team
-                }
-              ]
-            };
-            optimisticLiveLot = lots[targetIndex];
-          }
-        }
-
-        if (actionType === "sold") {
-          const latest = lots[targetIndex].bids.at(-1);
-          lots[targetIndex] = {
-            ...lots[targetIndex],
-            status: "SOLD",
-            soldToTeamId: latest?.teamId ?? lots[targetIndex].soldToTeamId,
-            soldAmount: latest?.amount ?? lots[targetIndex].soldAmount
-          };
-          if (nextOpenLot) {
-            const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
-            lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
-            optimisticLiveLot = lots[nextIndex];
-          }
-        }
-
-        if (actionType === "skip" || actionType === "unsold") {
-          lots[targetIndex] = {
-            ...lots[targetIndex],
-            status: "SKIPPED",
-            orderIndex: maxOrderIndex + 1
-          };
-          if (nextOpenLot) {
-            const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
-            lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
-            optimisticLiveLot = lots[nextIndex];
-          }
-        }
-
-        if (actionType === "unsell") {
+      if (actionType === "bid") {
+        const team = tournament.teams.find((item) => item.id === payload.teamId);
+        const amount = Number(payload.amount);
+        if (team && Number.isFinite(amount)) {
           lots[targetIndex] = {
             ...lots[targetIndex],
             status: "LIVE",
-            soldToTeamId: null,
-            soldAmount: null,
-            bids: []
+            bids: [
+              ...lots[targetIndex].bids,
+              {
+                id: `optimistic-${Date.now()}`,
+                teamId: team.id,
+                amount,
+                createdAt: new Date().toISOString(),
+                team
+              }
+            ]
           };
           optimisticLiveLot = lots[targetIndex];
         }
+      }
 
-        optimisticTournament = { ...tournament, lots };
-        return optimisticTournament;
-      })
-    );
+      if (actionType === "sold") {
+        const latest = lots[targetIndex].bids.at(-1);
+        lots[targetIndex] = {
+          ...lots[targetIndex],
+          status: "SOLD",
+          soldToTeamId: latest?.teamId ?? lots[targetIndex].soldToTeamId,
+          soldAmount: latest?.amount ?? lots[targetIndex].soldAmount
+        };
+        if (nextOpenLot) {
+          const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
+          lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
+          optimisticLiveLot = lots[nextIndex];
+        }
+      }
+
+      if (actionType === "skip" || actionType === "unsold") {
+        lots[targetIndex] = {
+          ...lots[targetIndex],
+          status: "SKIPPED",
+          orderIndex: maxOrderIndex + 1
+        };
+        if (nextOpenLot) {
+          const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
+          lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
+          optimisticLiveLot = lots[nextIndex];
+        }
+      }
+
+      if (actionType === "unsell") {
+        lots[targetIndex] = {
+          ...lots[targetIndex],
+          status: "LIVE",
+          soldToTeamId: null,
+          soldAmount: null,
+          bids: []
+        };
+        optimisticLiveLot = lots[targetIndex];
+      }
+
+      optimisticTournament = { ...tournament, lots };
+      return optimisticTournament;
+    });
+
+    setTournaments(nextTournaments);
 
     if (optimisticTournament) {
       publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeBroadcastRef.current);
