@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Gavel, ShieldCheck } from "lucide-react";
 import { categoryConfig, formatPoints } from "@/lib/demo-data";
+import { getMaxAllowedBid } from "@/lib/auction-rules";
 import { supabase } from "@/lib/supabase";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -20,6 +21,7 @@ type Lot = {
   category: PlayerCategory;
   basePrice: number;
   status: string;
+  soldToTeamId: string | null;
   player: {
     name: string;
     photoUrl: string | null;
@@ -33,6 +35,11 @@ type Lot = {
 type Tournament = {
   name: string;
   teams: Team[];
+  lots: Array<{
+    category: PlayerCategory;
+    status: string;
+    soldToTeamId: string | null;
+  }>;
 };
 
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
@@ -190,12 +197,15 @@ export function LiveDisplay() {
 
         <footer className="grid gap-3 border-t border-white/15 px-6 py-4 md:grid-cols-4">
           {tournament.teams.map((item) => (
-            <div key={item.id} className="flex items-center justify-between rounded-md bg-white/10 px-4 py-3">
-              <span className="flex items-center gap-2 font-semibold">
+            <div key={item.id} className="rounded-md bg-white/10 px-4 py-3">
+              <div className="flex items-center gap-2 font-semibold">
                 <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color ?? "#1f8f64" }} />
-                {item.name}
-              </span>
-              <span className="text-sm text-white/65">{formatPoints(item.budget - item.spent)} left</span>
+                <span>{item.name}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                <span className="text-white/60">Total {formatPoints(item.budget - item.spent)}</span>
+                <span className="font-semibold text-court-lime">Usable {formatPoints(getMaxAllowedBid(item, tournament.lots, lot.category))}</span>
+              </div>
             </div>
           ))}
         </footer>
