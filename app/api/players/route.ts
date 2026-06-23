@@ -48,12 +48,16 @@ export async function POST(request: Request) {
   const dominantHand = String(formData.get("dominantHand") ?? "").trim();
   const photo = formData.get("photo");
 
-  if (!name || !phone || !experience) {
-    return NextResponse.json({ error: "Name, mobile number, and experience are required." }, { status: 400 });
+  if (!name || !phone || !experience || !city || !dominantHand) {
+    return NextResponse.json({ error: "All player details are required." }, { status: 400 });
   }
 
   if (!/^[0-9+\-\s()]{7,18}$/.test(phone)) {
     return NextResponse.json({ error: "Enter a valid mobile number." }, { status: 400 });
+  }
+
+  if (!(photo instanceof File) || photo.size === 0) {
+    return NextResponse.json({ error: "Player photo is required." }, { status: 400 });
   }
 
   const existingPlayer = await prisma.player.findFirst({ where: { phone } });
@@ -63,52 +67,50 @@ export async function POST(request: Request) {
 
   let photoUrl: string | undefined;
 
-  if (photo instanceof File && photo.size > 0) {
-    if (photo.size > MAX_PHOTO_SIZE) {
-      return NextResponse.json({ error: "Photo must be 5 MB or smaller." }, { status: 400 });
-    }
+  if (photo.size > MAX_PHOTO_SIZE) {
+    return NextResponse.json({ error: "Photo must be 5 MB or smaller." }, { status: 400 });
+  }
 
-    if (!ALLOWED_PHOTO_TYPES.has(photo.type)) {
-      return NextResponse.json({ error: "Photo must be JPG, PNG, or WebP." }, { status: 400 });
-    }
+  if (!ALLOWED_PHOTO_TYPES.has(photo.type)) {
+    return NextResponse.json({ error: "Photo must be JPG, PNG, or WebP." }, { status: 400 });
+  }
 
-    const supabase = getSupabaseAdmin();
+  const supabase = getSupabaseAdmin();
 
-    if (!supabase) {
-      return NextResponse.json({ error: "Photo upload is not configured yet." }, { status: 500 });
-    }
+  if (!supabase) {
+    return NextResponse.json({ error: "Photo upload is not configured yet." }, { status: 500 });
+  }
 
-    const { data: buckets } = await supabase.storage.listBuckets();
-    const hasPhotoBucket = buckets?.some((bucket) => bucket.name === PHOTO_BUCKET);
+  const { data: buckets } = await supabase.storage.listBuckets();
+  const hasPhotoBucket = buckets?.some((bucket) => bucket.name === PHOTO_BUCKET);
 
-    if (!hasPhotoBucket) {
-      const { error: bucketError } = await supabase.storage.createBucket(PHOTO_BUCKET, {
-        public: true,
-        fileSizeLimit: 5 * 1024 * 1024,
-        allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"]
-      });
-
-      if (bucketError) {
-        return NextResponse.json({ error: bucketError.message }, { status: 500 });
-      }
-    }
-
-    const extension = photo.name.includes(".") ? photo.name.split(".").pop() : "jpg";
-    const path = `${Date.now()}-${cleanFileName(name)}.${cleanFileName(extension ?? "jpg")}`;
-    const bytes = await photo.arrayBuffer();
-
-    const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, bytes, {
-      contentType: photo.type || "image/jpeg",
-      upsert: false
+  if (!hasPhotoBucket) {
+    const { error: bucketError } = await supabase.storage.createBucket(PHOTO_BUCKET, {
+      public: true,
+      fileSizeLimit: 5 * 1024 * 1024,
+      allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"]
     });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (bucketError) {
+      return NextResponse.json({ error: bucketError.message }, { status: 500 });
     }
-
-    const { data } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
-    photoUrl = data.publicUrl;
   }
+
+  const extension = photo.name.includes(".") ? photo.name.split(".").pop() : "jpg";
+  const path = `${Date.now()}-${cleanFileName(name)}.${cleanFileName(extension ?? "jpg")}`;
+  const bytes = await photo.arrayBuffer();
+
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, bytes, {
+    contentType: photo.type || "image/jpeg",
+    upsert: false
+  });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const { data } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+  photoUrl = data.publicUrl;
 
   const player = await prisma.player.create({
     data: {

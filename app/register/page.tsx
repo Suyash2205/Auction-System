@@ -48,6 +48,7 @@ export default function RegisterPage() {
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [photoName, setPhotoName] = useState("");
 
   return (
     <main className="min-h-screen bg-[#f6fbf7]">
@@ -66,7 +67,7 @@ export default function RegisterPage() {
           <div className="rounded-lg border border-court-green/20 bg-white p-8 text-center shadow-sm">
             <CheckCircle2 className="mx-auto text-court-green" size={48} />
             <h2 className="mt-4 text-2xl font-semibold">Registration saved</h2>
-            <p className="mt-2 text-court-ink/60">In the connected version, this will be stored in Supabase with the uploaded photo.</p>
+            <p className="mt-2 text-court-ink/60">Your player profile and photo are saved online for the organizer.</p>
             <button onClick={() => setSubmitted(false)} className="mt-6 rounded-md bg-court-ink px-5 py-3 text-sm font-semibold text-white">
               Add Another Player
             </button>
@@ -82,14 +83,18 @@ export default function RegisterPage() {
               const formData = new FormData(event.currentTarget);
               const photo = formData.get("photo");
 
-              if (photo instanceof File && photo.size > 0) {
-                try {
-                  formData.set("photo", await compressImage(photo));
-                } catch {
-                  setIsSubmitting(false);
-                  setError("Could not process the selected photo. Please try another image.");
-                  return;
-                }
+              if (!(photo instanceof File) || photo.size === 0) {
+                setIsSubmitting(false);
+                setError("Player photo is required.");
+                return;
+              }
+
+              try {
+                formData.set("photo", await compressImage(photo));
+              } catch {
+                setIsSubmitting(false);
+                setError("Could not process the selected photo. Please try another image.");
+                return;
               }
 
               const response = await fetch("/api/players", {
@@ -106,6 +111,7 @@ export default function RegisterPage() {
               }
 
               setSubmitted(true);
+              setPhotoName("");
             }}
           >
             <div className="grid gap-5 md:grid-cols-2">
@@ -123,11 +129,11 @@ export default function RegisterPage() {
               </label>
               <label className="grid gap-2 text-sm font-semibold">
                 City
-                <input name="city" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 font-normal" placeholder="Mumbai" />
+                <input required name="city" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 font-normal" placeholder="Mumbai" />
               </label>
               <label className="grid gap-2 text-sm font-semibold">
                 Dominant Hand
-                <select name="dominantHand" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 font-normal">
+                <select required name="dominantHand" className="focus-ring rounded-md border border-court-ink/15 px-4 py-3 font-normal">
                   <option>Right</option>
                   <option>Left</option>
                 </select>
@@ -137,8 +143,15 @@ export default function RegisterPage() {
             <label className="grid min-h-40 place-items-center rounded-lg border border-dashed border-court-green/50 bg-court-mint/35 p-5 text-center">
               <Camera className="text-court-green" size={30} />
               <span className="mt-2 font-semibold">Upload Player Photo</span>
-              <span className="mt-1 text-sm text-court-ink/55">JPG or PNG, compressed before upload</span>
-              <input type="file" accept="image/*" name="photo" className="sr-only" />
+              <span className="mt-1 text-sm text-court-ink/55">{photoName || "JPG, PNG, or WebP, compressed before upload"}</span>
+              <input
+                required
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                name="photo"
+                className="sr-only"
+                onChange={(event) => setPhotoName(event.target.files?.[0]?.name ?? "")}
+              />
             </label>
 
             <div className="flex flex-col gap-3 border-t border-court-ink/10 pt-5 sm:flex-row sm:items-center sm:justify-between">

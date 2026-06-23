@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { Gavel, ShieldCheck } from "lucide-react";
 import { categoryConfig, formatPoints } from "@/lib/demo-data";
+import { supabase } from "@/lib/supabase";
 import type { PlayerCategory } from "@/lib/types";
 
 type Team = {
@@ -47,8 +48,21 @@ export function LiveDisplay() {
 
   useEffect(() => {
     load();
-    const interval = window.setInterval(load, 1200);
-    return () => window.clearInterval(interval);
+
+    const interval = window.setInterval(load, 5000);
+    const channel = supabase
+      ?.channel("live-auction-display")
+      .on("postgres_changes", { event: "*", schema: "public", table: "AuctionLot" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "Bid" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "Team" }, load)
+      .subscribe();
+
+    return () => {
+      window.clearInterval(interval);
+      if (channel) {
+        supabase?.removeChannel(channel);
+      }
+    };
   }, []);
 
   const bid = lot?.bids.at(-1);
