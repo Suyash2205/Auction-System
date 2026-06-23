@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveTournament } from "@/lib/auction-db";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,11 @@ export async function GET() {
   if (!tournament) {
     return NextResponse.json({ tournament: null }, { headers: { "cache-control": "no-store" } });
   }
+  const auctionEnded = Boolean(
+    await prisma.auditLog.findFirst({
+      where: { tournamentId: tournament.id, action: "AUCTION_ENDED" }
+    })
+  );
 
   const liveLot = tournament.lots.find((lot) => lot.status === "LIVE") ?? null;
   const completedCategory = liveLot
@@ -18,7 +24,7 @@ export async function GET() {
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0]?.category ?? null;
 
   return NextResponse.json(
-    { tournament, liveLot, completedCategory },
+    { tournament, liveLot: auctionEnded ? null : liveLot, completedCategory, auctionEnded },
     { headers: { "cache-control": "no-store" } }
   );
 }

@@ -85,7 +85,8 @@ function publishInstantDisplay(
   liveLot: Lot | null,
   realtimeChannel: RealtimeChannel | null,
   completedCategory: PlayerCategory | null = null,
-  saleEvents: SaleEvent[] = []
+  saleEvents: SaleEvent[] = [],
+  auctionEnded = false
 ) {
   const payload = {
     sentAt: Date.now(),
@@ -93,14 +94,18 @@ function publishInstantDisplay(
       name: tournament.name,
       teams: tournament.teams,
       lots: tournament.lots.map((lot) => ({
+        id: lot.id,
         category: lot.category,
         status: lot.status,
-        soldToTeamId: lot.soldToTeamId
+        soldToTeamId: lot.soldToTeamId,
+        soldAmount: lot.soldAmount,
+        player: { name: lot.player.name }
       }))
     },
     liveLot,
     completedCategory,
-    saleEvents
+    saleEvents,
+    auctionEnded
   };
 
   try {
@@ -172,6 +177,7 @@ export function AuctionRoom() {
     customAmount && customAmountNumber > selectedCustomMax
       ? `${selectedCustomTeam?.name ?? "Selected team"} can bid up to ${formatPoints(selectedCustomMax)} pts.`
       : "";
+  const auctionCanEnd = Boolean(selectedTournament?.lots.length && selectedTournament.lots.every((lot) => lot.status === "SOLD"));
 
   async function load() {
     const response = await fetch("/api/admin/tournaments");
@@ -446,6 +452,21 @@ export function AuctionRoom() {
     await action({ action: "unsell" }, lot.id);
   }
 
+  async function endAuction() {
+    if (!selectedTournament || !auctionCanEnd) return;
+    setError("");
+    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/end`, { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error ?? "Could not end auction.");
+      return;
+    }
+    if (data.tournament) {
+      setTournaments((current) => current.map((tournament) => (tournament.id === data.tournament.id ? data.tournament : tournament)));
+      publishInstantDisplay(data.tournament, null, realtimeReadyRef.current ? realtimeBroadcastRef.current : null, null, [], true);
+    }
+  }
+
   function selectCategory(nextCategory: PlayerCategory) {
     if (nextCategory !== activeCategory && activeCategoryIsOpen) {
       setError(`Finish ${activeCategory} before moving to another category.`);
@@ -489,6 +510,14 @@ export function AuctionRoom() {
           <p className="mt-2 text-court-ink/60">Bids, sold status, and live display state now save to the database.</p>
         </div>
         <div className="flex gap-2">
+          {auctionCanEnd ? (
+            <button onClick={endAuction} className="inline-flex items-center justify-center rounded-md bg-court-green px-4 py-3 text-sm font-semibold text-white">
+              End Auction
+            </button>
+          ) : null}
+          <a href="/api/exports/summary" className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-4 py-3 text-sm font-semibold">
+            <Download size={17} /> Summary CSV
+          </a>
           <a href="/api/exports/team" className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-4 py-3 text-sm font-semibold">
             <Download size={17} /> Team CSV
           </a>

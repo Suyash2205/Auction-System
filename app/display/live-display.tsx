@@ -36,9 +36,12 @@ type Tournament = {
   name: string;
   teams: Team[];
   lots: Array<{
+    id: string;
     category: PlayerCategory;
     status: string;
     soldToTeamId: string | null;
+    soldAmount: number | null;
+    player: { name: string };
   }>;
 };
 
@@ -66,6 +69,7 @@ export function LiveDisplay() {
   const [completedCategory, setCompletedCategory] = useState<PlayerCategory | null>(null);
   const [saleQueue, setSaleQueue] = useState<SaleEvent[]>([]);
   const [activeSale, setActiveSale] = useState<SaleEvent | null>(null);
+  const [auctionEnded, setAuctionEnded] = useState(false);
   const isLoadingRef = useRef(false);
   const lastInstantStateAtRef = useRef(0);
   const seenSaleIdsRef = useRef<Set<string>>(new Set());
@@ -84,6 +88,7 @@ export function LiveDisplay() {
       setTournament(data.tournament);
       setLot(data.liveLot);
       setCompletedCategory(data.completedCategory ?? null);
+      setAuctionEnded(Boolean(data.auctionEnded));
     } finally {
       isLoadingRef.current = false;
     }
@@ -94,7 +99,7 @@ export function LiveDisplay() {
 
     const interval = window.setInterval(load, 500);
     const applyInstantState = (value: unknown) => {
-      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[] };
+      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[]; auctionEnded?: boolean };
 
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
@@ -102,6 +107,7 @@ export function LiveDisplay() {
       setTournament(data.tournament ?? null);
       setLot(data.liveLot ?? null);
       setCompletedCategory(data.completedCategory ?? null);
+      setAuctionEnded(Boolean(data.auctionEnded));
       if (data.saleEvents?.length) {
         const freshSaleEvents = data.saleEvents.filter((saleEvent) => {
           if (seenSaleIdsRef.current.has(saleEvent.id)) return false;
@@ -210,6 +216,47 @@ export function LiveDisplay() {
               </div>
               <p className="mt-6 text-7xl font-black text-court-lime">{formatPoints(activeSale.amount)}</p>
             </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (auctionEnded) {
+    return (
+      <main className="min-h-screen bg-court-ink text-white">
+        <section className="court-grid min-h-screen px-6 py-8">
+          <header className="mx-auto w-full max-w-7xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Auction Completed</p>
+            <h1 className="mt-3 text-5xl font-black">{tournament.name}</h1>
+          </header>
+          <div className="mx-auto mt-8 grid w-full max-w-7xl gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {tournament.teams.map((team) => {
+              const players = tournament.lots.filter((item) => item.soldToTeamId === team.id);
+
+              return (
+                <article key={team.id} className="rounded-lg border border-white/15 bg-white/10 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="h-4 w-4 rounded-full" style={{ backgroundColor: team.color ?? "#1f8f64" }} />
+                      <h2 className="text-2xl font-black">{team.name}</h2>
+                    </div>
+                    <span className="text-sm text-white/60">{formatPoints(team.budget - team.spent)} left</span>
+                  </div>
+                  <div className="mt-4 grid gap-2">
+                    {players.map((item) => (
+                      <div key={item.id} className="rounded-md bg-white/10 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <span className="font-semibold">{item.player.name}</span>
+                          <span className="text-court-lime">{formatPoints(item.soldAmount ?? 0)}</span>
+                        </div>
+                        <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-white/50">{item.category}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       </main>
