@@ -109,7 +109,7 @@ function publishInstantDisplay(
   };
 
   try {
-    window.localStorage.setItem(INSTANT_DISPLAY_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(INSTANT_DISPLAY_KEY, JSON.stringify({ ...payload, saleEvents: [] }));
     new BroadcastChannel(INSTANT_DISPLAY_CHANNEL).postMessage(payload);
   } catch {
     // Best-effort same-browser acceleration; server state remains authoritative.

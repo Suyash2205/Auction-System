@@ -122,7 +122,7 @@ export function LiveDisplay() {
 
     try {
       const cached = window.localStorage.getItem(INSTANT_DISPLAY_KEY);
-      if (cached) applyInstantState(JSON.parse(cached));
+      if (cached) applyInstantState({ ...JSON.parse(cached), saleEvents: [] });
     } catch {
       // Ignore malformed stale instant display state.
     }
@@ -133,7 +133,7 @@ export function LiveDisplay() {
     const storageListener = (event: StorageEvent) => {
       if (event.key !== INSTANT_DISPLAY_KEY || !event.newValue) return;
       try {
-        applyInstantState(JSON.parse(event.newValue));
+        applyInstantState({ ...JSON.parse(event.newValue), saleEvents: [] });
       } catch {
         // Ignore malformed storage payloads.
       }
