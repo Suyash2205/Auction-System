@@ -138,6 +138,7 @@ export function AuctionRoom() {
   const pendingSaleEventsRef = useRef<SaleEvent[]>([]);
   const latestActionRequestRef = useRef(0);
   const autoStartedLotRef = useRef("");
+  const latestBidByLotRef = useRef<Record<string, number>>({});
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -181,10 +182,28 @@ export function AuctionRoom() {
       : "";
   const auctionCanEnd = Boolean(selectedTournament?.lots.length && selectedTournament.lots.every((lot) => lot.status === "SOLD"));
 
+  function mergeLatestBids(incomingTournament: Tournament) {
+    return {
+      ...incomingTournament,
+      lots: incomingTournament.lots.map((lot) => {
+        const guardedAmount = latestBidByLotRef.current[lot.id] ?? 0;
+        const serverLatestAmount = lot.bids.at(-1)?.amount ?? 0;
+        if (serverLatestAmount >= guardedAmount) {
+          if (serverLatestAmount) latestBidByLotRef.current[lot.id] = serverLatestAmount;
+          return lot;
+        }
+
+        const currentLot = selectedTournament?.lots.find((item) => item.id === lot.id);
+        const currentLatestAmount = currentLot?.bids.at(-1)?.amount ?? 0;
+        return currentLatestAmount >= guardedAmount ? { ...lot, bids: currentLot?.bids ?? lot.bids } : lot;
+      })
+    };
+  }
+
   async function load() {
     const response = await fetch("/api/admin/tournaments");
     const data = await response.json();
-    setTournaments(data.tournaments ?? []);
+    setTournaments((data.tournaments ?? []).map((tournament: Tournament) => mergeLatestBids(tournament)));
     setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
     setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
     setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
@@ -255,6 +274,7 @@ export function AuctionRoom() {
         const team = tournament.teams.find((item) => item.id === payload.teamId);
         const amount = Number(payload.amount);
         if (team && Number.isFinite(amount)) {
+          latestBidByLotRef.current[targetLotId] = Math.max(latestBidByLotRef.current[targetLotId] ?? 0, amount);
           lots[targetIndex] = {
             ...lots[targetIndex],
             status: "LIVE",
@@ -377,13 +397,14 @@ export function AuctionRoom() {
       return;
     }
     if (data.tournament) {
-      const responseLiveLot = data.tournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
-      setTournaments((current) => current.map((tournament) => (tournament.id === data.tournament.id ? data.tournament : tournament)));
+      const mergedTournament = mergeLatestBids(data.tournament);
+      const responseLiveLot = mergedTournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
+      setTournaments((current) => current.map((tournament) => (tournament.id === mergedTournament.id ? mergedTournament : tournament)));
       setSelectedTournamentId(data.tournament.id);
       setCustomTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
       setOwnerTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
       publishInstantDisplay(
-        data.tournament,
+        mergedTournament,
         responseLiveLot,
         realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
         responseLiveLot ? null : actionCategory,
@@ -392,7 +413,7 @@ export function AuctionRoom() {
     }
   }
 
-  async function addBid(teamId: string, amount: number) {
+  async function addBid(teamId: string, amount: number, autoStepFastTap = true) {
     if (!openCurrentLot) {
       setError("This player is already closed. Use Re-auction if you need to restart.");
       return;
@@ -402,12 +423,20 @@ export function AuctionRoom() {
       setError(`${team.name} already has the required player count for ${currentLot.category}.`);
       return;
     }
+    const latestKnownAmount = currentLot ? Math.max(latestBidByLotRef.current[currentLot.id] ?? 0, currentLot.bids.at(-1)?.amount ?? 0) : 0;
+    const safeAmount = currentLot
+      ? Math.max(amount, autoStepFastTap ? latestKnownAmount + selectedTournament.bidIncrement : amount, currentLot.basePrice)
+      : amount;
+    if (!autoStepFastTap && safeAmount < latestKnownAmount + selectedTournament.bidIncrement) {
+      setError(`Bid must be at least ${formatPoints(latestKnownAmount + selectedTournament.bidIncrement)} pts.`);
+      return;
+    }
     const maxAllowedBid = team && currentLot ? getMaxAllowedBid(team, selectedTournament.lots, currentLot.category) : 0;
-    if (team && amount > maxAllowedBid) {
+    if (team && safeAmount > maxAllowedBid) {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
       return;
     }
-    await action({ action: "bid", teamId, amount });
+    await action({ action: "bid", teamId, amount: safeAmount });
   }
 
   async function addCustomBid(event: FormEvent<HTMLFormElement>) {
@@ -431,7 +460,7 @@ export function AuctionRoom() {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
       return;
     }
-    await addBid(customTeamId, amount);
+    await addBid(customTeamId, amount, false);
     setCustomAmount("");
   }
 

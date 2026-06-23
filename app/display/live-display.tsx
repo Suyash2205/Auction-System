@@ -73,6 +73,20 @@ export function LiveDisplay() {
   const isLoadingRef = useRef(false);
   const lastInstantStateAtRef = useRef(0);
   const seenSaleIdsRef = useRef<Set<string>>(new Set());
+  const latestBidByLotRef = useRef<Record<string, number>>({});
+
+  const guardLiveLot = useCallback((incomingLot: Lot | null) => {
+    if (!incomingLot) return incomingLot;
+
+    const incomingAmount = incomingLot.bids.at(-1)?.amount ?? 0;
+    const guardedAmount = latestBidByLotRef.current[incomingLot.id] ?? 0;
+    if (incomingAmount >= guardedAmount) {
+      if (incomingAmount) latestBidByLotRef.current[incomingLot.id] = incomingAmount;
+      return incomingLot;
+    }
+
+    return lot?.id === incomingLot.id ? { ...incomingLot, bids: lot.bids } : incomingLot;
+  }, [lot]);
 
   const load = useCallback(async () => {
     if (isLoadingRef.current) return;
@@ -86,7 +100,7 @@ export function LiveDisplay() {
         return;
       }
       setTournament(data.tournament);
-      setLot(data.liveLot);
+      setLot(guardLiveLot(data.liveLot));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
     } finally {
@@ -105,7 +119,7 @@ export function LiveDisplay() {
 
       lastInstantStateAtRef.current = Date.now();
       setTournament(data.tournament ?? null);
-      setLot(data.liveLot ?? null);
+      setLot(guardLiveLot(data.liveLot ?? null));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
       if (data.saleEvents?.length) {
