@@ -40,19 +40,25 @@ const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
 const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
 const SUPABASE_BROADCAST_EVENT = "state";
 const MAX_INSTANT_STATE_AGE_MS = 10_000;
+const INSTANT_SERVER_GRACE_MS = 2_500;
 
 export function LiveDisplay() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [lot, setLot] = useState<Lot | null>(null);
   const isLoadingRef = useRef(false);
+  const lastInstantStateAtRef = useRef(0);
 
   const load = useCallback(async () => {
     if (isLoadingRef.current) return;
+    const requestedAt = Date.now();
     isLoadingRef.current = true;
 
     try {
       const response = await fetch("/api/public/display", { cache: "no-store" });
       const data = await response.json();
+      if (requestedAt < lastInstantStateAtRef.current || Date.now() - lastInstantStateAtRef.current < INSTANT_SERVER_GRACE_MS) {
+        return;
+      }
       setTournament(data.tournament);
       setLot(data.liveLot);
     } finally {
@@ -69,6 +75,7 @@ export function LiveDisplay() {
 
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
+      lastInstantStateAtRef.current = Date.now();
       setTournament(data.tournament ?? null);
       setLot(data.liveLot ?? null);
     };
