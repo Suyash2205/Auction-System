@@ -31,7 +31,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const lot = await prisma.auctionLot.findUnique({
     where: { id: lotId },
-    include: { bids: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } }
+    include: { bids: { orderBy: { createdAt: "asc" } } }
   });
   const tournamentConfig = await prisma.tournament.findUnique({ where: { id } });
 
@@ -42,7 +42,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const categoryLots = await prisma.auctionLot.findMany({
     where: { tournamentId: id, category: lot.category },
     orderBy: { orderIndex: "asc" },
-    include: { bids: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } }
+    include: { bids: { orderBy: { createdAt: "asc" } } }
   });
   const maxOrderIndex = Math.max(...categoryLots.map((item) => item.orderIndex), 0);
 

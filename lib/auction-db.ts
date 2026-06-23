@@ -14,7 +14,7 @@ export function getTournamentInclude() {
         player: true,
         bids: {
           include: { team: true },
-          orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }]
+          orderBy: { createdAt: "asc" as const }
         },
         soldToTeam: true
       },
