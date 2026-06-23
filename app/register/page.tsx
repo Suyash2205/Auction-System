@@ -5,6 +5,8 @@ import { Camera, CheckCircle2, Send } from "lucide-react";
 
 export default function RegisterPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   return (
     <main className="min-h-screen bg-[#f6fbf7]">
@@ -31,8 +33,25 @@ export default function RegisterPage() {
         ) : (
           <form
             className="grid gap-5 rounded-lg border border-court-ink/10 bg-white p-5 shadow-sm sm:p-7"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
+              setIsSubmitting(true);
+              setError("");
+
+              const formData = new FormData(event.currentTarget);
+              const response = await fetch("/api/players", {
+                method: "POST",
+                body: formData
+              });
+
+              setIsSubmitting(false);
+
+              if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                setError(data?.error ?? "Could not save registration. Please try again.");
+                return;
+              }
+
               setSubmitted(true);
             }}
           >
@@ -71,10 +90,13 @@ export default function RegisterPage() {
 
             <div className="flex flex-col gap-3 border-t border-court-ink/10 pt-5 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-court-ink/55">Mobile number stays private. Tournament category is assigned later by the admin.</p>
-              <button className="inline-flex items-center justify-center gap-2 rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white shadow-glow">
-                <Send size={17} /> Submit Registration
+              <button disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white shadow-glow disabled:cursor-not-allowed disabled:opacity-60">
+                <Send size={17} /> {isSubmitting ? "Saving..." : "Submit Registration"}
               </button>
             </div>
+            {error ? (
+              <p className="rounded-md bg-court-clay/10 px-4 py-3 text-sm font-semibold text-court-clay">{error}</p>
+            ) : null}
           </form>
         )}
       </section>
