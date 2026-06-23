@@ -102,6 +102,9 @@ export function AuctionRoom() {
   const [customAmount, setCustomAmount] = useState("");
   const [error, setError] = useState("");
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
+  const realtimeReadyRef = useRef(false);
+  const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
+  const pendingDisplayLotRef = useRef<Lot | null>(null);
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -144,9 +147,17 @@ export function AuctionRoom() {
       config: { broadcast: { self: false } }
     });
     realtimeBroadcastRef.current = channel;
-    channel.subscribe();
+    channel.subscribe((status) => {
+      realtimeReadyRef.current = status === "SUBSCRIBED";
+      if (status === "SUBSCRIBED" && pendingDisplayPayloadRef.current) {
+        publishInstantDisplay(pendingDisplayPayloadRef.current, pendingDisplayLotRef.current, channel);
+        pendingDisplayPayloadRef.current = null;
+        pendingDisplayLotRef.current = null;
+      }
+    });
 
     return () => {
+      realtimeReadyRef.current = false;
       realtimeBroadcastRef.current = null;
       void realtimeClient.removeChannel(channel);
     };
@@ -239,7 +250,11 @@ export function AuctionRoom() {
     setTournaments(nextTournaments);
 
     if (optimisticTournament) {
-      publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeBroadcastRef.current);
+      publishInstantDisplay(optimisticTournament, optimisticLiveLot, realtimeReadyRef.current ? realtimeBroadcastRef.current : null);
+      if (!realtimeReadyRef.current) {
+        pendingDisplayPayloadRef.current = optimisticTournament;
+        pendingDisplayLotRef.current = optimisticLiveLot;
+      }
     }
   }
 
