@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 type AuditInput = {
@@ -6,7 +7,7 @@ type AuditInput = {
   entityId?: string | null;
   tournamentId?: string | null;
   summary: string;
-  details?: Record<string, unknown>;
+  details?: Prisma.InputJsonValue;
 };
 
 export async function writeAuditLog(input: AuditInput) {
