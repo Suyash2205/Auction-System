@@ -87,7 +87,7 @@ export function LiveDisplay() {
       }
       setTournament(data.tournament);
       setLot(data.liveLot);
-      setCompletedCategory(data.completedCategory ?? null);
+      setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
     } finally {
       isLoadingRef.current = false;
@@ -106,7 +106,7 @@ export function LiveDisplay() {
       lastInstantStateAtRef.current = Date.now();
       setTournament(data.tournament ?? null);
       setLot(data.liveLot ?? null);
-      setCompletedCategory(data.completedCategory ?? null);
+      setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
       if (data.saleEvents?.length) {
         const freshSaleEvents = data.saleEvents.filter((saleEvent) => {
