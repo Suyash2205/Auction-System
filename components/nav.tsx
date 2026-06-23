@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Gavel, LayoutDashboard, MonitorUp, UserPlus } from "lucide-react";
+import { Gavel, LayoutDashboard, MonitorUp, UserPlus, UsersRound } from "lucide-react";
 
 const links = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/players", label: "Players", icon: UsersRound },
   { href: "/register", label: "Register", icon: UserPlus },
   { href: "/admin/auction", label: "Auction", icon: Gavel },
   { href: "/display", label: "Display", icon: MonitorUp }

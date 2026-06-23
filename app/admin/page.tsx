@@ -89,6 +89,9 @@ export default function AdminDashboard() {
                 <PlayerCard key={player.id} player={player} compact />
               ))}
             </div>
+            <Link href="/admin/players" className="mt-4 inline-flex rounded-md bg-court-ink px-4 py-2 text-sm font-semibold text-white">
+              View Real Registrations
+            </Link>
           </section>
         </div>
       </section>
