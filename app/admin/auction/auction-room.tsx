@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
+import { Download, Gavel, RotateCcw, SkipForward, Trophy, CheckCircle2, Loader2 } from "lucide-react";
 import { TransitionDebugPanel } from "@/components/transition-debug-panel";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
 import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
@@ -171,6 +171,13 @@ export function AuctionRoom() {
   const [statusMessage, setStatusMessage] = useState("");
   const [pendingSoldLotId, setPendingSoldLotId] = useState("");
   const [pendingOwnerLotId, setPendingOwnerLotId] = useState("");
+  const [soldFeedback, setSoldFeedback] = useState<{
+    phase: "selling" | "confirmed" | "failed";
+    playerName: string;
+    teamName?: string;
+    amount?: number;
+    message?: string;
+  } | null>(null);
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
@@ -179,7 +186,7 @@ export function AuctionRoom() {
   const pendingSaleEventsRef = useRef<SaleEvent[]>([]);
   const latestActionRequestRef = useRef(0);
   const latestBidByLotRef = useRef<Record<string, number>>({});
-  const bidInFlightRef = useRef<Set<Promise<void>>>(new Set());
+  const bidInFlightRef = useRef<Set<Promise<boolean>>>(new Set());
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -290,6 +297,12 @@ export function AuctionRoom() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (soldFeedback?.phase !== "confirmed") return;
+    const timeout = window.setTimeout(() => setSoldFeedback(null), 10000);
+    return () => window.clearTimeout(timeout);
+  }, [soldFeedback]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -458,10 +471,10 @@ export function AuctionRoom() {
     }
   }
 
-  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory) {
-    if (!selectedTournament || !targetLotId) return;
+  async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory): Promise<boolean> {
+    if (!selectedTournament || !targetLotId) return false;
 
-    const run = async () => {
+    const run = async (): Promise<boolean> => {
     const transitionId = makeTransitionId(String(payload.action ?? "action"), targetLotId);
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
@@ -490,14 +503,21 @@ export function AuctionRoom() {
       data = await readJson(response);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
+      if (payload.action === "sold") {
+        setSoldFeedback({
+          phase: "failed",
+          playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player",
+          message: fetchError instanceof Error ? fetchError.message : "Auction action failed."
+        });
+      }
       if (payload.action === "sold" || payload.action === "owner") {
         await syncDisplayFromServer(targetLotId, actionCategory);
       } else {
         await load({ trustServer: true, lotId: targetLotId });
       }
-      return;
+      return false;
     }
-    if (!isBid && requestId !== latestActionRequestRef.current) return;
+    if (!isBid && requestId !== latestActionRequestRef.current) return false;
 
       if (!response.ok) {
       const guardedAmount = targetLotId ? latestBidByLotRef.current[targetLotId] ?? 0 : 0;
@@ -506,7 +526,7 @@ export function AuctionRoom() {
         typeof data.error === "string" &&
         data.error.startsWith("Bid must be at least") &&
         guardedAmount > 0;
-      if (isStaleBidError) return;
+      if (isStaleBidError) return false;
 
       appendTransitionDebug({
         id: transitionId,
@@ -519,12 +539,19 @@ export function AuctionRoom() {
       });
       setError(data.error ?? "Auction action failed.");
       setStatusMessage("");
+      if (payload.action === "sold") {
+        setSoldFeedback({
+          phase: "failed",
+          playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player",
+          message: data.error ?? "Auction action failed."
+        });
+      }
       if (payload.action === "sold" || payload.action === "owner") {
         await syncDisplayFromServer(targetLotId, actionCategory);
       } else {
         await load({ trustServer: true, lotId: targetLotId });
       }
-      return;
+      return false;
     }
     if (!data.tournament) {
       const incoming = await load({ trustServer: true, lotId: targetLotId });
@@ -534,7 +561,14 @@ export function AuctionRoom() {
         incoming?.[0];
       if (!refreshedTournament) {
         setError("Action saved but tournament data could not be refreshed. Please reload the page.");
-        return;
+        if (payload.action === "sold") {
+          setSoldFeedback({
+            phase: "failed",
+            playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player",
+            message: "Could not refresh tournament data after sold."
+          });
+        }
+        return false;
       }
       const mergedTournament = mergeLatestBids(refreshedTournament);
       const responseLiveLot = mergedTournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
@@ -553,11 +587,32 @@ export function AuctionRoom() {
       );
       if (payload.action === "sold") {
         const saleEvent = data.saleEvents?.[0];
-        setStatusMessage(
-          saleEvent
-            ? `Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`
-            : "Sold confirmed."
-        );
+        if (saleEvent) {
+          setSoldFeedback({
+            phase: "confirmed",
+            playerName: saleEvent.playerName,
+            teamName: saleEvent.teamName,
+            amount: saleEvent.amount
+          });
+          setStatusMessage(`Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`);
+          appendTransitionDebug({
+            id: data.transitionId ?? transitionId,
+            source: "admin-success",
+            action: "sold",
+            tournament: selectedTournament.name,
+            category: actionCategory,
+            lotId: targetLotId,
+            player: saleEvent.playerName,
+            amount: saleEvent.amount,
+            note: `Sold to ${saleEvent.teamName}`
+          });
+        } else {
+          setSoldFeedback({
+            phase: "confirmed",
+            playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player"
+          });
+          setStatusMessage("Sold confirmed.");
+        }
       }
       if (payload.action === "owner") {
         const targetLot = mergedTournament.lots.find((lot) => lot.id === targetLotId);
@@ -568,7 +623,7 @@ export function AuctionRoom() {
             : "Owner player confirmed."
         );
       }
-      return;
+      return true;
     }
     if (data.tournament) {
       const responseTournament = data.tournament;
@@ -589,11 +644,32 @@ export function AuctionRoom() {
       );
       if (payload.action === "sold") {
         const saleEvent = data.saleEvents?.[0];
-        setStatusMessage(
-          saleEvent
-            ? `Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`
-            : "Sold confirmed."
-        );
+        if (saleEvent) {
+          setSoldFeedback({
+            phase: "confirmed",
+            playerName: saleEvent.playerName,
+            teamName: saleEvent.teamName,
+            amount: saleEvent.amount
+          });
+          setStatusMessage(`Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`);
+          appendTransitionDebug({
+            id: data.transitionId ?? transitionId,
+            source: "admin-success",
+            action: "sold",
+            tournament: selectedTournament.name,
+            category: actionCategory,
+            lotId: targetLotId,
+            player: saleEvent.playerName,
+            amount: saleEvent.amount,
+            note: `Sold to ${saleEvent.teamName}`
+          });
+        } else {
+          setSoldFeedback({
+            phase: "confirmed",
+            playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player"
+          });
+          setStatusMessage("Sold confirmed.");
+        }
       }
       if (payload.action === "owner") {
         const targetLot = responseTournament.lots.find((lot) => lot.id === targetLotId);
@@ -604,14 +680,17 @@ export function AuctionRoom() {
             : "Owner player confirmed."
         );
       }
+      return true;
     }
+
+    return true;
     };
 
     if (payload.action === "bid") {
       const promise = run();
       bidInFlightRef.current.add(promise);
       promise.finally(() => bidInFlightRef.current.delete(promise));
-      return;
+      return true;
     }
 
     return run();
@@ -679,7 +758,14 @@ export function AuctionRoom() {
     await waitForPendingBids();
     const soldAmount = Math.max(latestBid.amount, latestBidByLotRef.current[currentLot.id] ?? 0);
     const soldTeamName = latestBid.team.name;
+    setError("");
     setPendingSoldLotId(currentLot.id);
+    setSoldFeedback({
+      phase: "selling",
+      playerName: currentLot.player.name,
+      teamName: soldTeamName,
+      amount: soldAmount
+    });
     setStatusMessage(`Selling ${currentLot.player.name} to ${soldTeamName} for ${formatPoints(soldAmount)} pts...`);
     try {
       await action({ action: "sold", expectedBidAmount: soldAmount });
@@ -883,11 +969,32 @@ export function AuctionRoom() {
                 <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">
                   {pendingSoldLotId === currentLot.id ? "Selling..." : "Sold"}
                 </button>
-                <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE"} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
+                <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
                   <SkipForward size={17} /> Skip
                 </button>
-                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status !== "LIVE"} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
+                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
               </div>
+              {soldFeedback ? (
+                <div
+                  className={`mt-4 flex items-start gap-3 rounded-md px-4 py-3 text-sm font-semibold ${
+                    soldFeedback.phase === "selling"
+                      ? "bg-amber-50 text-amber-950 ring-1 ring-amber-200"
+                      : soldFeedback.phase === "confirmed"
+                        ? "bg-court-green text-white"
+                        : "bg-court-clay/10 text-court-clay"
+                  }`}
+                >
+                  {soldFeedback.phase === "selling" ? <Loader2 size={18} className="mt-0.5 shrink-0 animate-spin" /> : null}
+                  {soldFeedback.phase === "confirmed" ? <CheckCircle2 size={18} className="mt-0.5 shrink-0" /> : null}
+                  <span>
+                    {soldFeedback.phase === "selling"
+                      ? `Selling ${soldFeedback.playerName} to ${soldFeedback.teamName} for ${formatPoints(soldFeedback.amount ?? 0)} pts...`
+                      : soldFeedback.phase === "confirmed"
+                        ? `Sold — ${soldFeedback.playerName} to ${soldFeedback.teamName} for ${formatPoints(soldFeedback.amount ?? 0)} pts`
+                        : `Sell failed for ${soldFeedback.playerName}: ${soldFeedback.message ?? "Please try again."}`}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-5 rounded-lg border border-court-ink/10 bg-[#f6fbf7] p-4">
