@@ -14,22 +14,30 @@ function cleanFileName(value: string) {
 }
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("auction_admin")?.value;
-  const [timestamp, signature] = session?.split(".") ?? [];
-  const expected = timestamp && process.env.NEXTAUTH_SECRET
-    ? createHmac("sha256", process.env.NEXTAUTH_SECRET).update(timestamp).digest("hex")
-    : "";
+  try {
+    const cookieStore = await cookies();
+    const session = cookieStore.get("auction_admin")?.value;
+    const [timestamp, signature] = session?.split(".") ?? [];
+    const expected = timestamp && process.env.NEXTAUTH_SECRET
+      ? createHmac("sha256", process.env.NEXTAUTH_SECRET).update(timestamp).digest("hex")
+      : "";
 
-  if (!timestamp || signature !== expected || Date.now() - Number(timestamp) > 1000 * 60 * 60 * 12) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!timestamp || signature !== expected || Date.now() - Number(timestamp) > 1000 * 60 * 60 * 12) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const players = await prisma.player.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+
+    return NextResponse.json({ players });
+  } catch (error) {
+    console.error("Player list failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not load players." },
+      { status: 500 }
+    );
   }
-
-  const players = await prisma.player.findMany({
-    orderBy: { createdAt: "desc" }
-  });
-
-  return NextResponse.json({ players });
 }
 
 export async function POST(request: Request) {

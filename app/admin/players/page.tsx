@@ -6,9 +6,28 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 
 export default async function RegisteredPlayersPage() {
-  const players = await prisma.player.findMany({
-    orderBy: { createdAt: "desc" }
-  });
+  let players: Awaited<ReturnType<typeof prisma.player.findMany>> = [];
+  let loadError = "";
+
+  try {
+    players = await prisma.player.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+  } catch (error) {
+    console.error("Registered players page failed", error);
+    loadError = error instanceof Error ? error.message : "Could not load players from database.";
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+        <p className="rounded-md bg-court-clay/10 px-4 py-3 text-sm font-semibold text-court-clay">
+          Database error: {loadError}
+        </p>
+        <p className="mt-3 text-sm text-court-ink/60">Refresh in a few seconds. If this persists, the database connection pool may be busy.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">

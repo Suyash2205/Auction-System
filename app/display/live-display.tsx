@@ -158,7 +158,7 @@ export function LiveDisplay() {
   useEffect(() => {
     load();
 
-    const interval = window.setInterval(load, 500);
+    const interval = window.setInterval(load, 2000);
     const applyInstantState = (value: unknown, source = "display-instant") => {
       const data = value as { transitionId?: string; mode?: DisplayMode; sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[]; auctionEnded?: boolean };
 
