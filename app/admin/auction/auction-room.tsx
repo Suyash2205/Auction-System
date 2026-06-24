@@ -517,7 +517,16 @@ export function AuctionRoom() {
       }
       return false;
     }
-    if (!isBid && requestId !== latestActionRequestRef.current) return false;
+    if (!isBid && requestId !== latestActionRequestRef.current) {
+      if (payload.action === "sold") {
+        setSoldFeedback({
+          phase: "failed",
+          playerName: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? "Player",
+          message: "Sell was interrupted by another action. Please try Sold again."
+        });
+      }
+      return false;
+    }
 
       if (!response.ok) {
       const guardedAmount = targetLotId ? latestBidByLotRef.current[targetLotId] ?? 0 : 0;
@@ -554,6 +563,10 @@ export function AuctionRoom() {
       return false;
     }
     if (!data.tournament) {
+      if (payload.action === "bid") {
+        return true;
+      }
+
       const incoming = await load({ trustServer: true, lotId: targetLotId });
       const refreshedTournament =
         incoming?.find((item) => item.id === selectedTournament.id) ??
@@ -696,10 +709,13 @@ export function AuctionRoom() {
     return run();
   }
 
-  async function waitForPendingBids() {
+  async function waitForPendingBids(timeoutMs = 2500) {
     const pending = [...bidInFlightRef.current];
     if (!pending.length) return;
-    await Promise.allSettled(pending);
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs))
+    ]);
   }
 
   async function addBid(teamId: string, amount: number, autoStepFastTap = true) {
@@ -754,9 +770,14 @@ export function AuctionRoom() {
   }
 
   async function sellCurrentLot() {
-    if (!latestBid || !currentLot) return;
-    await waitForPendingBids();
-    const soldAmount = Math.max(latestBid.amount, latestBidByLotRef.current[currentLot.id] ?? 0);
+    if (!currentLot) return;
+    const knownAmount = Math.max(latestBid?.amount ?? 0, latestBidByLotRef.current[currentLot.id] ?? 0);
+    if (!latestBid || knownAmount < currentLot.basePrice) {
+      setError("Cannot sell without a bid.");
+      return;
+    }
+
+    const soldAmount = knownAmount;
     const soldTeamName = latestBid.team.name;
     setError("");
     setPendingSoldLotId(currentLot.id);
@@ -767,6 +788,9 @@ export function AuctionRoom() {
       amount: soldAmount
     });
     setStatusMessage(`Selling ${currentLot.player.name} to ${soldTeamName} for ${formatPoints(soldAmount)} pts...`);
+
+    await waitForPendingBids();
+
     try {
       await action({ action: "sold", expectedBidAmount: soldAmount });
     } finally {
@@ -952,27 +976,29 @@ export function AuctionRoom() {
           </article>
 
           <section className="rounded-lg border border-court-ink/10 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-4 border-b border-court-ink/10 pb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium text-court-ink/55">Current Bid</p>
-                <p className="mt-1 text-5xl font-bold text-court-ink">{formatPoints(latestBid?.amount ?? currentLot.basePrice)} pts</p>
-                {leadingTeam ? (
-                  <div className="mt-3 inline-flex items-center gap-3 rounded-md bg-court-mint px-4 py-3">
-                    <span className="h-4 w-4 rounded-full" style={{ backgroundColor: leadingTeam.color ?? "#1f8f64" }} />
-                    <span className="text-2xl font-black text-court-ink">{leadingTeam.name}</span>
-                  </div>
-                ) : (
-                  <p className="mt-3 text-lg font-semibold text-court-ink/60">Waiting for first bid</p>
-                )}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">
-                  {pendingSoldLotId === currentLot.id ? "Selling..." : "Sold"}
-                </button>
-                <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
-                  <SkipForward size={17} /> Skip
-                </button>
-                <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
+            <div className="border-b border-court-ink/10 pb-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-court-ink/55">Current Bid</p>
+                  <p className="mt-1 text-5xl font-bold text-court-ink">{formatPoints(latestBid?.amount ?? currentLot.basePrice)} pts</p>
+                  {leadingTeam ? (
+                    <div className="mt-3 inline-flex items-center gap-3 rounded-md bg-court-mint px-4 py-3">
+                      <span className="h-4 w-4 rounded-full" style={{ backgroundColor: leadingTeam.color ?? "#1f8f64" }} />
+                      <span className="text-2xl font-black text-court-ink">{leadingTeam.name}</span>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-lg font-semibold text-court-ink/60">Waiting for first bid</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">
+                    {pendingSoldLotId === currentLot.id ? "Selling..." : "Sold"}
+                  </button>
+                  <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
+                    <SkipForward size={17} /> Skip
+                  </button>
+                  <button onClick={() => action({ action: "unsold" })} disabled={currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-clay px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Unsold</button>
+                </div>
               </div>
               {soldFeedback ? (
                 <div
