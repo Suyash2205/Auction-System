@@ -164,6 +164,8 @@ export function AuctionRoom() {
   const [ownerTeamId, setOwnerTeamId] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [pendingSoldLotId, setPendingSoldLotId] = useState("");
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
@@ -417,6 +419,7 @@ export function AuctionRoom() {
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
     setError("");
+    if (payload.action !== "sold") setStatusMessage("");
     appendTransitionDebug({
       id: transitionId,
       source: "admin-click",
@@ -457,6 +460,7 @@ export function AuctionRoom() {
         note: data.error ?? "Auction action failed."
       });
       setError(data.error ?? "Auction action failed.");
+      setStatusMessage("");
       await load();
       return;
     }
@@ -477,6 +481,14 @@ export function AuctionRoom() {
         false,
         data.transitionId ?? transitionId
       );
+      if (payload.action === "sold") {
+        const saleEvent = data.saleEvents?.[0];
+        setStatusMessage(
+          saleEvent
+            ? `Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`
+            : "Sold confirmed."
+        );
+      }
     }
   }
 
@@ -532,8 +544,14 @@ export function AuctionRoom() {
   }
 
   async function sellCurrentLot() {
-    if (!latestBid) return;
-    await action({ action: "sold" });
+    if (!latestBid || !currentLot) return;
+    setPendingSoldLotId(currentLot.id);
+    setStatusMessage(`Selling ${currentLot.player.name} to ${latestBid.team.name} for ${formatPoints(latestBid.amount)} pts...`);
+    try {
+      await action({ action: "sold" });
+    } finally {
+      setPendingSoldLotId("");
+    }
   }
 
   async function skipPlayer() {
@@ -661,6 +679,7 @@ export function AuctionRoom() {
       </div>
 
       {error ? <p className="mt-5 rounded-md bg-court-clay/10 px-4 py-3 text-sm font-semibold text-court-clay">{error}</p> : null}
+      {statusMessage ? <p className="mt-5 rounded-md bg-court-mint px-4 py-3 text-sm font-semibold text-court-green">{statusMessage}</p> : null}
 
       {!selectedTournament ? (
         <section className="mt-8 rounded-lg border border-court-ink/10 bg-white p-8 text-center shadow-sm">
@@ -730,7 +749,9 @@ export function AuctionRoom() {
                 )}
               </div>
               <div className="grid grid-cols-3 gap-2">
-                <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE"} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
+                <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE" || pendingSoldLotId === currentLot.id} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">
+                  {pendingSoldLotId === currentLot.id ? "Selling..." : "Sold"}
+                </button>
                 <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE"} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
                   <SkipForward size={17} /> Skip
                 </button>
