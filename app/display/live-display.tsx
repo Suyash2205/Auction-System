@@ -175,7 +175,12 @@ export function LiveDisplay() {
 
     try {
       const cached = window.localStorage.getItem(INSTANT_DISPLAY_KEY);
-      if (cached) applyInstantState({ ...JSON.parse(cached), saleEvents: [] }, "display-cache");
+      if (cached) {
+        const cachedState = { ...JSON.parse(cached), saleEvents: [] };
+        if (cachedState.liveLot || cachedState.auctionEnded) {
+          applyInstantState(cachedState, "display-cache");
+        }
+      }
     } catch {
       // Ignore malformed stale instant display state.
     }
@@ -186,7 +191,10 @@ export function LiveDisplay() {
     const storageListener = (event: StorageEvent) => {
       if (event.key !== INSTANT_DISPLAY_KEY || !event.newValue) return;
       try {
-        applyInstantState({ ...JSON.parse(event.newValue), saleEvents: [] }, "display-storage");
+        const storageState = { ...JSON.parse(event.newValue), saleEvents: [] };
+        if (storageState.liveLot || storageState.auctionEnded) {
+          applyInstantState(storageState, "display-storage");
+        }
       } catch {
         // Ignore malformed storage payloads.
       }

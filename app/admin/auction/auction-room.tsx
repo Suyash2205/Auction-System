@@ -139,7 +139,11 @@ function publishInstantDisplay(
   });
 
   try {
-    window.localStorage.setItem(INSTANT_DISPLAY_KEY, JSON.stringify({ ...payload, saleEvents: [] }));
+    if (mode === "LIVE_PLAYER" || mode === "AUCTION_ENDED") {
+      window.localStorage.setItem(INSTANT_DISPLAY_KEY, JSON.stringify({ ...payload, saleEvents: [] }));
+    } else if (mode === "WAITING") {
+      window.localStorage.removeItem(INSTANT_DISPLAY_KEY);
+    }
     new BroadcastChannel(INSTANT_DISPLAY_CHANNEL).postMessage(payload);
   } catch {
     // Best-effort same-browser acceleration; server state remains authoritative.
@@ -429,13 +433,22 @@ export function AuctionRoom() {
     if (!["sold", "owner"].includes(String(payload.action ?? ""))) {
       applyOptimisticAction(payload, targetLotId);
     }
-    const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, transitionId, ...payload })
-    });
-    const data = await response.json();
-    if (isBidAction) setPendingBidCount((current) => Math.max(current - 1, 0));
+    let response: Response;
+    let data: { error?: string; tournament?: Tournament; saleEvents?: SaleEvent[]; transitionId?: string };
+    try {
+      response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, transitionId, ...payload })
+      });
+      data = await response.json();
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
+      await load();
+      return;
+    } finally {
+      if (isBidAction) setPendingBidCount((current) => Math.max(current - 1, 0));
+    }
     if (requestId !== latestActionRequestRef.current) return;
 
     if (!response.ok) {
@@ -453,12 +466,13 @@ export function AuctionRoom() {
       return;
     }
     if (data.tournament) {
-      const mergedTournament = mergeLatestBids(data.tournament);
+      const responseTournament = data.tournament;
+      const mergedTournament = mergeLatestBids(responseTournament);
       const responseLiveLot = mergedTournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
       setTournaments((current) => current.map((tournament) => (tournament.id === mergedTournament.id ? mergedTournament : tournament)));
-      setSelectedTournamentId(data.tournament.id);
-      setCustomTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
-      setOwnerTeamId((current) => current || data.tournament.teams?.[0]?.id || "");
+      setSelectedTournamentId(responseTournament.id);
+      setCustomTeamId((current) => current || responseTournament.teams?.[0]?.id || "");
+      setOwnerTeamId((current) => current || responseTournament.teams?.[0]?.id || "");
       publishInstantDisplay(
         mergedTournament,
         responseLiveLot,
