@@ -238,13 +238,13 @@ export function PlayerScreenShare() {
 
             <main className="my-8 flex flex-1 flex-col items-center justify-center">
               <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur">
-                <div className="relative aspect-[4/3] w-full bg-court-mint/20 sm:aspect-[16/10]">
+                <div className="relative min-h-[380px] w-full bg-gradient-to-b from-white via-white to-court-mint/25 sm:min-h-[520px]">
                   {current.photoUrl ? (
                     <Image
                       src={current.photoUrl}
                       alt={current.listName}
                       fill
-                      className="object-cover"
+                      className="object-contain object-center p-4 sm:p-8"
                       sizes="(max-width: 1024px) 100vw, 960px"
                       priority
                     />
@@ -256,7 +256,7 @@ export function PlayerScreenShare() {
                       <p className="text-sm font-semibold uppercase tracking-[0.18em]">No photo</p>
                     </div>
                   )}
-                  <div className="absolute left-4 top-4 flex flex-wrap gap-2">
+                  <div className="absolute left-4 top-4 z-10 flex flex-wrap gap-2">
                     <span className="rounded-md bg-court-lime px-4 py-2 text-sm font-black text-court-ink">
                       {current.category} · {current.categoryLabel}
                     </span>
