@@ -41,3 +41,8 @@ export const prisma =
   );
 
 globalForPrisma.prisma = prisma;
+
+export const prismaTransactionOptions = {
+  maxWait: 15000,
+  timeout: 20000
+};

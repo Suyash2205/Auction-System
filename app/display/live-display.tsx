@@ -82,6 +82,8 @@ export function LiveDisplay() {
   const currentLotRef = useRef<Lot | null>(null);
   const lastInstantLotIdRef = useRef<string | null>(null);
   const lastInstantModeRef = useRef<DisplayMode | null>(null);
+  const suppressPollLotIdRef = useRef<string | null>(null);
+  const suppressPollUntilRef = useRef(0);
 
   useEffect(() => {
     currentLotRef.current = lot;
@@ -110,6 +112,9 @@ export function LiveDisplay() {
         if (seenSaleIdsRef.current.has(saleEvent.id) || queuedSaleIdsRef.current.has(saleEvent.id)) return;
         seenSaleIdsRef.current.add(saleEvent.id);
         queuedSaleIdsRef.current.add(saleEvent.id);
+        const lotId = saleEvent.id.replace(/-\d+$/, "");
+        suppressPollLotIdRef.current = lotId;
+        suppressPollUntilRef.current = Date.now() + 15000;
         nextQueue.push(saleEvent);
       });
 
@@ -135,6 +140,17 @@ export function LiveDisplay() {
         Date.now() - lastInstantStateAtRef.current < 8000
       ) {
         return;
+      }
+      if (
+        suppressPollLotIdRef.current &&
+        Date.now() < suppressPollUntilRef.current &&
+        data.liveLot?.id === suppressPollLotIdRef.current
+      ) {
+        return;
+      }
+      if (data.liveLot?.id && data.liveLot.id !== suppressPollLotIdRef.current) {
+        suppressPollLotIdRef.current = null;
+        suppressPollUntilRef.current = 0;
       }
       setTournament(data.tournament);
       setLot(guardLiveLot(data.liveLot));

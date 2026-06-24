@@ -247,19 +247,43 @@ export function AuctionRoom() {
       const data = await readJson(response);
       if (!response.ok) {
         setError(typeof data.error === "string" ? data.error : "Could not refresh auction data.");
-        return;
+        return null;
       }
       if (options?.trustServer && options.lotId) {
         delete latestBidByLotRef.current[options.lotId];
       }
       const incoming = (data.tournaments ?? []) as Tournament[];
-      if (!incoming.length) return;
+      if (!incoming.length) return null;
       setTournaments(options?.trustServer ? incoming : incoming.map((tournament) => mergeLatestBids(tournament)));
       setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
       setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
       setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
+      return incoming;
     } catch {
       setError("Could not refresh auction data. Please try again.");
+      return null;
+    }
+  }
+
+  function publishServerDisplay(tournament: Tournament, actionCategory: PlayerCategory | null) {
+    const liveLot = tournament.lots.find((lot) => lot.status === "LIVE") ?? null;
+    const categoryLots = actionCategory ? tournament.lots.filter((lot) => lot.category === actionCategory) : [];
+    const categoryOpen = categoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
+    const completedCategory = liveLot || !actionCategory || categoryOpen ? null : actionCategory;
+    publishInstantDisplay(
+      tournament,
+      liveLot,
+      realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
+      completedCategory,
+      []
+    );
+  }
+
+  async function syncDisplayFromServer(targetLotId: string, actionCategory: PlayerCategory | null) {
+    const incoming = await load({ trustServer: true, lotId: targetLotId });
+    const tournament = incoming?.find((item) => item.id === selectedTournament?.id) ?? incoming?.[0];
+    if (tournament) {
+      publishServerDisplay(tournament, actionCategory);
     }
   }
 
@@ -349,37 +373,23 @@ export function AuctionRoom() {
 
         if (actionType === "sold") {
           const latest = lots[targetIndex].bids.at(-1);
-          lots[targetIndex] = {
-            ...lots[targetIndex],
-            status: "SOLD",
-            soldToTeamId: latest?.teamId ?? lots[targetIndex].soldToTeamId,
-            soldAmount: latest?.amount ?? lots[targetIndex].soldAmount
-          };
-          const teamIndex = tournament.teams.findIndex((team) => team.id === latest?.teamId);
-          const teams = tournament.teams.map((team) => ({ ...team }));
-          if (teamIndex >= 0 && latest) {
-            teams[teamIndex] = { ...teams[teamIndex], spent: teams[teamIndex].spent + latest.amount };
+          const team = tournament.teams.find((item) => item.id === latest?.teamId);
+          if (latest && team) {
             optimisticSaleEvents = [
               {
                 id: `${targetLotId}-${latest.amount}`,
                 playerName: lots[targetIndex].player.name,
                 playerPhotoUrl: lots[targetIndex].player.photoUrl,
                 category: lots[targetIndex].category,
-                teamName: teams[teamIndex].name,
-                teamColor: teams[teamIndex].color,
+                teamName: team.name,
+                teamColor: team.color,
                 amount: latest.amount,
                 kind: "sold"
               }
             ];
           }
-          if (nextOpenLot) {
-            const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
-            lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
-            optimisticLiveLot = lots[nextIndex];
-          } else {
-            optimisticCompletedCategory = lots[targetIndex].category;
-          }
-          optimisticTournament = { ...tournament, teams, lots };
+          optimisticLiveLot = lots[targetIndex];
+          optimisticTournament = tournament;
           return optimisticTournament;
         }
 
@@ -480,7 +490,11 @@ export function AuctionRoom() {
       data = await readJson(response);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
-      await load({ trustServer: true, lotId: targetLotId });
+      if (payload.action === "sold" || payload.action === "owner") {
+        await syncDisplayFromServer(targetLotId, actionCategory);
+      } else {
+        await load({ trustServer: true, lotId: targetLotId });
+      }
       return;
     }
     if (!isBid && requestId !== latestActionRequestRef.current) return;
@@ -505,12 +519,20 @@ export function AuctionRoom() {
       });
       setError(data.error ?? "Auction action failed.");
       setStatusMessage("");
-      await load({ trustServer: true, lotId: targetLotId });
+      if (payload.action === "sold" || payload.action === "owner") {
+        await syncDisplayFromServer(targetLotId, actionCategory);
+      } else {
+        await load({ trustServer: true, lotId: targetLotId });
+      }
       return;
     }
     if (!data.tournament) {
-      setError("Auction action finished without tournament data. Refreshing...");
-      await load({ trustServer: true, lotId: targetLotId });
+      if (payload.action === "sold" || payload.action === "owner") {
+        await load({ trustServer: true, lotId: targetLotId });
+      } else {
+        setError("Auction action finished without tournament data. Refreshing...");
+        await syncDisplayFromServer(targetLotId, actionCategory);
+      }
       return;
     }
     if (data.tournament) {

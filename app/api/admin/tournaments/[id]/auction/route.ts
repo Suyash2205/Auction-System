@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { writeAuditLog } from "@/lib/audit-log";
 import { getActiveTournament } from "@/lib/auction-db";
 import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
-import { prisma } from "@/lib/prisma";
+import { prisma, prismaTransactionOptions } from "@/lib/prisma";
 
 type CategoryLot = {
   id: string;
@@ -320,7 +320,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         await tx.bid.create({
           data: { lotId, teamId, amount }
         });
-      });
+      }, prismaTransactionOptions);
     } catch (transactionError) {
       const message = transactionError instanceof Error ? transactionError.message : "Bid failed.";
       if (message.startsWith("Bid must be at least")) {
@@ -466,24 +466,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       kind: "sold"
     });
 
-    await prisma.$transaction([
-      prisma.auctionLot.update({
-        where: { id: lotId },
-        data: { status: "SOLD", soldToTeamId: latestBid.teamId, soldAmount: latestBid.amount }
-      }),
-      prisma.team.update({
-        where: { id: latestBid.teamId },
-        data: { spent: { increment: latestBid.amount } }
-      }),
-      ...(nextOpenLot
-        ? [
-            prisma.auctionLot.update({
-              where: { id: nextOpenLot.id },
-              data: { status: "LIVE" }
-            })
-          ]
-        : [])
-    ]);
+    await prisma.auctionLot.update({
+      where: { id: lotId },
+      data: { status: "SOLD", soldToTeamId: latestBid.teamId, soldAmount: latestBid.amount }
+    });
+    await prisma.team.update({
+      where: { id: latestBid.teamId },
+      data: { spent: { increment: latestBid.amount } }
+    });
+    if (nextOpenLot) {
+      await prisma.auctionLot.update({
+        where: { id: nextOpenLot.id },
+        data: { status: "LIVE" }
+      });
+    }
     await writeAuditLog({
       action: "SOLD",
       entityType: "AuctionLot",
@@ -566,8 +562,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
   }
 
-  const tournament = await getActiveTournament(id);
-  return NextResponse.json({ transitionId, tournament: tournament ? { ...tournament, ownerTeamIds: await getOwnerTeamIds(id) } : tournament, saleEvents });
+  let tournament = null;
+  try {
+    tournament = await getActiveTournament(id);
+  } catch (loadError) {
+    console.error("Tournament refresh failed after auction action", loadError);
+  }
+
+  const ownerTeamIds = tournament ? await getOwnerTeamIds(id).catch(() => []) : [];
+  return NextResponse.json({
+    transitionId,
+    tournament: tournament ? { ...tournament, ownerTeamIds } : tournament,
+    saleEvents
+  });
   } catch (error) {
     console.error("Auction action failed", error);
     return NextResponse.json(
