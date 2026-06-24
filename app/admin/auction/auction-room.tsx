@@ -166,6 +166,7 @@ export function AuctionRoom() {
   const [error, setError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [pendingSoldLotId, setPendingSoldLotId] = useState("");
+  const [pendingOwnerLotId, setPendingOwnerLotId] = useState("");
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
@@ -419,7 +420,7 @@ export function AuctionRoom() {
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
     setError("");
-    if (payload.action !== "sold") setStatusMessage("");
+    if (!["sold", "owner"].includes(String(payload.action ?? ""))) setStatusMessage("");
     appendTransitionDebug({
       id: transitionId,
       source: "admin-click",
@@ -487,6 +488,15 @@ export function AuctionRoom() {
           saleEvent
             ? `Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`
             : "Sold confirmed."
+        );
+      }
+      if (payload.action === "owner") {
+        const targetLot = responseTournament.lots.find((lot) => lot.id === targetLotId);
+        const team = responseTournament.teams.find((item) => item.id === payload.teamId);
+        setStatusMessage(
+          targetLot && team
+            ? `Owner confirmed: ${targetLot.player.name} reserved for ${team.name}.`
+            : "Owner player confirmed."
         );
       }
     }
@@ -566,7 +576,13 @@ export function AuctionRoom() {
       setError(`${team.name} already has the required player count for ${currentLot.category}.`);
       return;
     }
-    await action({ action: "owner", teamId: ownerTeamId });
+    setPendingOwnerLotId(currentLot.id);
+    setStatusMessage(`Marking ${currentLot.player.name} as owner player for ${team?.name ?? "selected team"}...`);
+    try {
+      await action({ action: "owner", teamId: ownerTeamId });
+    } finally {
+      setPendingOwnerLotId("");
+    }
   }
 
   async function unsellPlayer(lot: Lot) {
@@ -772,11 +788,12 @@ export function AuctionRoom() {
                   disabled={
                     currentLot.status !== "LIVE" ||
                     !ownerTeamId ||
+                    pendingOwnerLotId === currentLot.id ||
                     !canTeamBidInCategory(selectedTournament.lots, ownerTeamId, currentLot.category)
                   }
                   className="inline-flex h-12 items-center justify-center rounded-md bg-court-green px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Mark Owner
+                  {pendingOwnerLotId === currentLot.id ? "Marking..." : "Mark Owner"}
                 </button>
               </div>
               <p className="mt-3 text-sm text-court-ink/55">

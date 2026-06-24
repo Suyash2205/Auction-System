@@ -46,6 +46,10 @@ type Tournament = {
 
 const colors = ["#1f8f64", "#1677a8", "#d8643f", "#7f56d9", "#d7f241", "#13231d"];
 
+async function readJson(response: Response) {
+  return response.json().catch(() => ({}));
+}
+
 export function TournamentManager() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -67,13 +71,17 @@ export function TournamentManager() {
     try {
       const [playersResponse, tournamentsResponse] = await Promise.all([
         fetch("/api/players"),
-        fetch("/api/admin/tournaments")
+        fetch("/api/admin/tournaments?view=setup")
       ]);
-      const playersData = await playersResponse.json();
-      const tournamentsData = await tournamentsResponse.json();
+      const playersData = await readJson(playersResponse);
+      const tournamentsData = await readJson(tournamentsResponse);
 
-      if (!playersResponse.ok || !tournamentsResponse.ok) {
-        setError(playersData.error ?? tournamentsData.error ?? "Could not load setup data.");
+      if (!playersResponse.ok) {
+        setError(`Could not load players: ${playersData.error ?? playersResponse.statusText}.`);
+        return;
+      }
+      if (!tournamentsResponse.ok) {
+        setError(`Could not load tournaments: ${tournamentsData.error ?? tournamentsResponse.statusText}.`);
         return;
       }
 

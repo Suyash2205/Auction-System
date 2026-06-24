@@ -3,30 +3,58 @@ import { writeAuditLog } from "@/lib/audit-log";
 import { getTournamentInclude } from "@/lib/auction-db";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
-  const tournaments = await prisma.tournament.findMany({
-    orderBy: { createdAt: "desc" },
-    include: getTournamentInclude()
-  });
-  const ownerLogs = await prisma.auditLog.findMany({
-    where: { action: "OWNER_RESERVED" },
-    select: { tournamentId: true, details: true }
-  });
-  const ownerTeamsByTournament = new Map<string, Set<string>>();
-  ownerLogs.forEach((log) => {
-    const teamId = typeof log.details === "object" && log.details && "teamId" in log.details ? String(log.details.teamId) : "";
-    if (!log.tournamentId || !teamId) return;
-    const teamIds = ownerTeamsByTournament.get(log.tournamentId) ?? new Set<string>();
-    teamIds.add(teamId);
-    ownerTeamsByTournament.set(log.tournamentId, teamIds);
-  });
+function getTournamentSetupInclude() {
+  return {
+    teams: {
+      orderBy: { createdAt: "asc" as const }
+    },
+    players: {
+      include: { player: true },
+      orderBy: { selectedAt: "asc" as const }
+    },
+    lots: {
+      include: {
+        player: true,
+        soldToTeam: true
+      },
+      orderBy: { orderIndex: "asc" as const }
+    }
+  };
+}
 
-  return NextResponse.json({
-    tournaments: tournaments.map((tournament) => ({
-      ...tournament,
-      ownerTeamIds: [...(ownerTeamsByTournament.get(tournament.id) ?? new Set<string>())]
-    }))
-  });
+export async function GET(request: Request) {
+  try {
+    const view = new URL(request.url).searchParams.get("view");
+    const tournaments = await prisma.tournament.findMany({
+      orderBy: { createdAt: "desc" },
+      include: view === "setup" ? getTournamentSetupInclude() : getTournamentInclude()
+    });
+    const ownerLogs = await prisma.auditLog.findMany({
+      where: { action: "OWNER_RESERVED" },
+      select: { tournamentId: true, details: true }
+    });
+    const ownerTeamsByTournament = new Map<string, Set<string>>();
+    ownerLogs.forEach((log) => {
+      const teamId = typeof log.details === "object" && log.details && "teamId" in log.details ? String(log.details.teamId) : "";
+      if (!log.tournamentId || !teamId) return;
+      const teamIds = ownerTeamsByTournament.get(log.tournamentId) ?? new Set<string>();
+      teamIds.add(teamId);
+      ownerTeamsByTournament.set(log.tournamentId, teamIds);
+    });
+
+    return NextResponse.json({
+      tournaments: tournaments.map((tournament) => ({
+        ...tournament,
+        ownerTeamIds: [...(ownerTeamsByTournament.get(tournament.id) ?? new Set<string>())]
+      }))
+    });
+  } catch (error) {
+    console.error("Tournament list failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not load tournaments." },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
