@@ -409,9 +409,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const expectedBidAmount = Number(body.expectedBidAmount ?? 0);
-    const latestBid = await findLatestBid(lotId, Number.isFinite(expectedBidAmount) ? expectedBidAmount : undefined);
+    const latestBid = await findLatestBid(lotId, Number.isFinite(expectedBidAmount) && expectedBidAmount > 0 ? expectedBidAmount : undefined);
     if (!latestBid) {
-      return NextResponse.json({ error: "Cannot sell without a bid." }, { status: 400 });
+      return NextResponse.json(
+        {
+          error: expectedBidAmount
+            ? "Latest bid has not finished saving yet. Wait a moment and try Sold again."
+            : "Cannot sell without a bid."
+        },
+        { status: expectedBidAmount ? 409 : 400 }
+      );
     }
     if (expectedBidAmount && latestBid.amount < expectedBidAmount) {
       return NextResponse.json({ error: `Latest bid is still ${latestBid.amount}. Wait for ${expectedBidAmount} to confirm before selling.` }, { status: 409 });

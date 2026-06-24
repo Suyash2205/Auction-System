@@ -176,6 +176,7 @@ export function AuctionRoom() {
   const latestActionRequestRef = useRef(0);
   const autoStartedLotRef = useRef("");
   const latestBidByLotRef = useRef<Record<string, number>>({});
+  const bidQueueRef = useRef(Promise.resolve());
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -237,10 +238,14 @@ export function AuctionRoom() {
     };
   }
 
-  async function load() {
+  async function load(options?: { trustServer?: boolean; lotId?: string }) {
     const response = await fetch("/api/admin/tournaments");
     const data = await response.json();
-    setTournaments((data.tournaments ?? []).map((tournament: Tournament) => mergeLatestBids(tournament)));
+    if (options?.trustServer && options.lotId) {
+      delete latestBidByLotRef.current[options.lotId];
+    }
+    const incoming = (data.tournaments ?? []) as Tournament[];
+    setTournaments(options?.trustServer ? incoming : incoming.map((tournament) => mergeLatestBids(tournament)));
     setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
     setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
     setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
@@ -445,10 +450,15 @@ export function AuctionRoom() {
       data = await response.json();
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
-      await load();
+      await load({ trustServer: true, lotId: targetLotId });
       return;
     }
-    if (requestId !== latestActionRequestRef.current) return;
+    if (requestId !== latestActionRequestRef.current) {
+      if (payload.action === "bid") {
+        void load({ trustServer: true, lotId: targetLotId });
+      }
+      return;
+    }
 
     if (!response.ok) {
       appendTransitionDebug({
@@ -462,7 +472,7 @@ export function AuctionRoom() {
       });
       setError(data.error ?? "Auction action failed.");
       setStatusMessage("");
-      await load();
+      await load({ trustServer: true, lotId: targetLotId });
       return;
     }
     if (data.tournament) {
@@ -525,7 +535,11 @@ export function AuctionRoom() {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
       return;
     }
-    await action({ action: "bid", teamId, amount: safeAmount });
+    const bidTask = bidQueueRef.current.then(async () => {
+      await action({ action: "bid", teamId, amount: safeAmount });
+    });
+    bidQueueRef.current = bidTask.catch(() => undefined);
+    await bidTask;
   }
 
   async function addCustomBid(event: FormEvent<HTMLFormElement>) {
@@ -555,10 +569,13 @@ export function AuctionRoom() {
 
   async function sellCurrentLot() {
     if (!latestBid || !currentLot) return;
+    await bidQueueRef.current;
+    const soldAmount = latestBid.amount;
+    const soldTeamName = latestBid.team.name;
     setPendingSoldLotId(currentLot.id);
-    setStatusMessage(`Selling ${currentLot.player.name} to ${latestBid.team.name} for ${formatPoints(latestBid.amount)} pts...`);
+    setStatusMessage(`Selling ${currentLot.player.name} to ${soldTeamName} for ${formatPoints(soldAmount)} pts...`);
     try {
-      await action({ action: "sold" });
+      await action({ action: "sold", expectedBidAmount: soldAmount });
     } finally {
       setPendingSoldLotId("");
     }
