@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Gavel, History, LayoutDashboard, MonitorUp, UserPlus, UsersRound } from "lucide-react";
+import { Gavel, History, LayoutDashboard, MonitorUp, Presentation, UserPlus, UsersRound } from "lucide-react";
 import { LogoutButton } from "@/components/logout-button";
 
 const links = [
@@ -8,7 +8,8 @@ const links = [
   { href: "/admin/audit-logs", label: "Logs", icon: History },
   { href: "/register", label: "Register", icon: UserPlus },
   { href: "/admin/auction", label: "Auction", icon: Gavel },
-  { href: "/display", label: "Display", icon: MonitorUp }
+  { href: "/display", label: "Display", icon: MonitorUp },
+  { href: "/screen-share", label: "Player Screen Share", icon: Presentation }
 ];
 
 export function Nav() {
