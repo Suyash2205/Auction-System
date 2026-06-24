@@ -174,9 +174,8 @@ export function AuctionRoom() {
   const pendingCompletedCategoryRef = useRef<PlayerCategory | null>(null);
   const pendingSaleEventsRef = useRef<SaleEvent[]>([]);
   const latestActionRequestRef = useRef(0);
-  const autoStartedLotRef = useRef("");
   const latestBidByLotRef = useRef<Record<string, number>>({});
-  const bidQueueRef = useRef(Promise.resolve());
+  const bidInFlightRef = useRef<Set<Promise<void>>>(new Set());
 
   const selectedTournament = useMemo(
     () => tournaments.find((tournament) => tournament.id === selectedTournamentId) ?? tournaments[0],
@@ -384,6 +383,23 @@ export function AuctionRoom() {
         }
       }
 
+      if (actionType === "owner") {
+        const teamId = String(payload.teamId ?? "");
+        lots[targetIndex] = {
+          ...lots[targetIndex],
+          status: "UNSOLD",
+          soldToTeamId: teamId,
+          soldAmount: null,
+          orderIndex: maxOrderIndex + 1,
+          bids: []
+        };
+        if (nextOpenLot) {
+          const nextIndex = lots.findIndex((lot) => lot.id === nextOpenLot.id);
+          lots[nextIndex] = { ...lots[nextIndex], status: "LIVE" };
+          optimisticLiveLot = lots[nextIndex];
+        }
+      }
+
       if (actionType === "unsell") {
         const teams = tournament.teams.map((team) =>
           team.id === lots[targetIndex].soldToTeamId
@@ -421,9 +437,12 @@ export function AuctionRoom() {
 
   async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory) {
     if (!selectedTournament || !targetLotId) return;
+
+    const run = async () => {
     const transitionId = makeTransitionId(String(payload.action ?? "action"), targetLotId);
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
+    const isBid = payload.action === "bid";
     setError("");
     if (!["sold", "owner"].includes(String(payload.action ?? ""))) setStatusMessage("");
     appendTransitionDebug({
@@ -436,9 +455,7 @@ export function AuctionRoom() {
       player: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? null,
       amount: typeof payload.amount === "number" ? payload.amount : null
     });
-    if (!["sold", "owner"].includes(String(payload.action ?? ""))) {
-      applyOptimisticAction(payload, targetLotId);
-    }
+    applyOptimisticAction(payload, targetLotId);
     let response: Response;
     let data: { error?: string; tournament?: Tournament; saleEvents?: SaleEvent[]; transitionId?: string };
     try {
@@ -453,14 +470,17 @@ export function AuctionRoom() {
       await load({ trustServer: true, lotId: targetLotId });
       return;
     }
-    if (requestId !== latestActionRequestRef.current) {
-      if (payload.action === "bid") {
-        void load({ trustServer: true, lotId: targetLotId });
-      }
-      return;
-    }
+    if (!isBid && requestId !== latestActionRequestRef.current) return;
 
-    if (!response.ok) {
+      if (!response.ok) {
+      const guardedAmount = targetLotId ? latestBidByLotRef.current[targetLotId] ?? 0 : 0;
+      const isStaleBidError =
+        payload.action === "bid" &&
+        typeof data.error === "string" &&
+        data.error.startsWith("Bid must be at least") &&
+        guardedAmount > 0;
+      if (isStaleBidError) return;
+
       appendTransitionDebug({
         id: transitionId,
         source: "admin-error",
@@ -510,6 +530,22 @@ export function AuctionRoom() {
         );
       }
     }
+    };
+
+    if (payload.action === "bid") {
+      const promise = run();
+      bidInFlightRef.current.add(promise);
+      promise.finally(() => bidInFlightRef.current.delete(promise));
+      return;
+    }
+
+    return run();
+  }
+
+  async function waitForPendingBids() {
+    const pending = [...bidInFlightRef.current];
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
   }
 
   async function addBid(teamId: string, amount: number, autoStepFastTap = true) {
@@ -535,11 +571,7 @@ export function AuctionRoom() {
       setError(`${team.name} can bid up to ${formatPoints(maxAllowedBid)} pts. Required category slots must stay reserved.`);
       return;
     }
-    const bidTask = bidQueueRef.current.then(async () => {
-      await action({ action: "bid", teamId, amount: safeAmount });
-    });
-    bidQueueRef.current = bidTask.catch(() => undefined);
-    await bidTask;
+    void action({ action: "bid", teamId, amount: safeAmount });
   }
 
   async function addCustomBid(event: FormEvent<HTMLFormElement>) {
@@ -569,8 +601,8 @@ export function AuctionRoom() {
 
   async function sellCurrentLot() {
     if (!latestBid || !currentLot) return;
-    await bidQueueRef.current;
-    const soldAmount = latestBid.amount;
+    await waitForPendingBids();
+    const soldAmount = Math.max(latestBid.amount, latestBidByLotRef.current[currentLot.id] ?? 0);
     const soldTeamName = latestBid.team.name;
     setPendingSoldLotId(currentLot.id);
     setStatusMessage(`Selling ${currentLot.player.name} to ${soldTeamName} for ${formatPoints(soldAmount)} pts...`);
@@ -636,15 +668,6 @@ export function AuctionRoom() {
       void action({ action: "live" }, randomLot.id, nextCategory);
     }
   }
-
-  useEffect(() => {
-    if (!selectedCategory || !currentLot || currentLot.status === "LIVE") return;
-    if (!["QUEUED", "SKIPPED"].includes(currentLot.status)) return;
-    if (autoStartedLotRef.current === currentLot.id) return;
-
-    autoStartedLotRef.current = currentLot.id;
-    void action({ action: "live" }, currentLot.id, selectedCategory);
-  }, [currentLot, selectedCategory]);
 
   useEffect(() => {
     if (eligibleCustomTeams.length && !eligibleCustomTeams.some((team) => team.id === customTeamId)) {

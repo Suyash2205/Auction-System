@@ -80,6 +80,8 @@ export function LiveDisplay() {
   const queuedSaleIdsRef = useRef<Set<string>>(new Set());
   const latestBidByLotRef = useRef<Record<string, number>>({});
   const currentLotRef = useRef<Lot | null>(null);
+  const lastInstantLotIdRef = useRef<string | null>(null);
+  const lastInstantModeRef = useRef<DisplayMode | null>(null);
 
   useEffect(() => {
     currentLotRef.current = lot;
@@ -126,6 +128,14 @@ export function LiveDisplay() {
       if (requestedAt < lastInstantStateAtRef.current || Date.now() - lastInstantStateAtRef.current < INSTANT_SERVER_GRACE_MS) {
         return;
       }
+      if (
+        lastInstantModeRef.current === "LIVE_PLAYER" &&
+        lastInstantLotIdRef.current &&
+        !data.liveLot &&
+        Date.now() - lastInstantStateAtRef.current < 8000
+      ) {
+        return;
+      }
       setTournament(data.tournament);
       setLot(guardLiveLot(data.liveLot));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
@@ -155,6 +165,9 @@ export function LiveDisplay() {
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
       lastInstantStateAtRef.current = Date.now();
+      lastInstantModeRef.current = data.mode ?? (data.auctionEnded ? "AUCTION_ENDED" : data.liveLot ? "LIVE_PLAYER" : data.completedCategory ? "CATEGORY_COMPLETED" : "WAITING");
+      if (data.liveLot?.id) lastInstantLotIdRef.current = data.liveLot.id;
+      if (!data.liveLot && data.mode !== "LIVE_PLAYER") lastInstantLotIdRef.current = null;
       setTournament(data.tournament ?? null);
       setLot(guardLiveLot(data.liveLot ?? null));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);

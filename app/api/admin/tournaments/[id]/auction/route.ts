@@ -267,19 +267,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!team || team.tournamentId !== id) {
       return NextResponse.json({ error: "Team not found." }, { status: 404 });
     }
-    const existingOwner = await prisma.auditLog.findFirst({
-      where: {
-        tournamentId: id,
-        action: "OWNER_RESERVED",
-        details: {
-          path: ["teamId"],
-          equals: teamId
-        }
-      }
-    });
-    if (existingOwner) {
-      return NextResponse.json({ error: `${team.name} already has an owner player.` }, { status: 400 });
-    }
 
     if (amount > team.budget - team.spent) {
       return NextResponse.json({ error: "Bid is higher than this team's remaining purse." }, { status: 400 });
@@ -300,19 +287,43 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       );
     }
 
-    await prisma.$transaction([
-      prisma.auctionLot.updateMany({
-        where: { tournamentId: id, status: "LIVE" },
-        data: { status: "QUEUED" }
-      }),
-      prisma.auctionLot.update({
-        where: { id: lotId },
-        data: { status: "LIVE" }
-      }),
-      prisma.bid.create({
-        data: { lotId, teamId, amount }
-      })
-    ]);
+    try {
+      await prisma.$transaction(async (tx) => {
+        const freshLot = await tx.auctionLot.findUnique({
+          where: { id: lotId },
+          include: { bids: { orderBy: { createdAt: "asc" } } }
+        });
+        if (!freshLot) throw new Error("Lot not found.");
+
+        const freshLatestBid = freshLot.bids.at(-1);
+        const freshMinimumBid = Math.max(
+          freshLot.basePrice,
+          (freshLatestBid?.amount ?? freshLot.basePrice - tournamentConfig.bidIncrement) + tournamentConfig.bidIncrement
+        );
+
+        if (amount < freshMinimumBid) {
+          throw new Error(`Bid must be at least ${freshMinimumBid}.`);
+        }
+
+        await tx.auctionLot.updateMany({
+          where: { tournamentId: id, status: "LIVE" },
+          data: { status: "QUEUED" }
+        });
+        await tx.auctionLot.update({
+          where: { id: lotId },
+          data: { status: "LIVE" }
+        });
+        await tx.bid.create({
+          data: { lotId, teamId, amount }
+        });
+      });
+    } catch (transactionError) {
+      const message = transactionError instanceof Error ? transactionError.message : "Bid failed.";
+      if (message.startsWith("Bid must be at least")) {
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+      throw transactionError;
+    }
     await writeAuditLog({
       action: "BID",
       entityType: "Bid",
@@ -332,6 +343,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const team = await prisma.team.findUnique({ where: { id: teamId } });
     if (!team || team.tournamentId !== id) {
       return NextResponse.json({ error: "Team not found." }, { status: 404 });
+    }
+    const existingOwner = await prisma.auditLog.findFirst({
+      where: {
+        tournamentId: id,
+        action: "OWNER_RESERVED",
+        details: {
+          path: ["teamId"],
+          equals: teamId
+        }
+      }
+    });
+    if (existingOwner) {
+      return NextResponse.json({ error: `${team.name} already has an owner player.` }, { status: 400 });
     }
     if (!canTeamBidInCategory(budgetLots, team.id, lot.category)) {
       return NextResponse.json(
