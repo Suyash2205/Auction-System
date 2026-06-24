@@ -164,7 +164,6 @@ export function AuctionRoom() {
   const [ownerTeamId, setOwnerTeamId] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [error, setError] = useState("");
-  const [pendingBidCount, setPendingBidCount] = useState(0);
   const realtimeBroadcastRef = useRef<RealtimeChannel | null>(null);
   const realtimeReadyRef = useRef(false);
   const pendingDisplayPayloadRef = useRef<Parameters<typeof publishInstantDisplay>[0] | null>(null);
@@ -414,12 +413,10 @@ export function AuctionRoom() {
 
   async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory) {
     if (!selectedTournament || !targetLotId) return;
-    const isBidAction = payload.action === "bid";
     const transitionId = makeTransitionId(String(payload.action ?? "action"), targetLotId);
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
     setError("");
-    if (isBidAction) setPendingBidCount((current) => current + 1);
     appendTransitionDebug({
       id: transitionId,
       source: "admin-click",
@@ -446,8 +443,6 @@ export function AuctionRoom() {
       setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
       await load();
       return;
-    } finally {
-      if (isBidAction) setPendingBidCount((current) => Math.max(current - 1, 0));
     }
     if (requestId !== latestActionRequestRef.current) return;
 
@@ -537,12 +532,8 @@ export function AuctionRoom() {
   }
 
   async function sellCurrentLot() {
-    if (!latestBid || pendingBidCount > 0) return;
-    await action({
-      action: "sold",
-      expectedBidAmount: latestBid.amount,
-      expectedBidTeamId: latestBid.teamId
-    });
+    if (!latestBid) return;
+    await action({ action: "sold" });
   }
 
   async function skipPlayer() {
@@ -739,9 +730,7 @@ export function AuctionRoom() {
                 )}
               </div>
               <div className="grid grid-cols-3 gap-2">
-                <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE" || pendingBidCount > 0} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">
-                  {pendingBidCount > 0 ? "Saving Bid" : "Sold"}
-                </button>
+                <button onClick={sellCurrentLot} disabled={!latestBid || currentLot.status !== "LIVE"} className="rounded-md bg-court-green px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Sold</button>
                 <button onClick={skipPlayer} disabled={currentLot.status !== "LIVE"} className="inline-flex items-center justify-center gap-2 rounded-md border border-court-ink/15 px-5 py-3 text-sm font-bold disabled:opacity-40">
                   <SkipForward size={17} /> Skip
                 </button>
