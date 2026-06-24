@@ -527,11 +527,46 @@ export function AuctionRoom() {
       return;
     }
     if (!data.tournament) {
-      if (payload.action === "sold" || payload.action === "owner") {
-        await load({ trustServer: true, lotId: targetLotId });
-      } else {
-        setError("Auction action finished without tournament data. Refreshing...");
-        await syncDisplayFromServer(targetLotId, actionCategory);
+      const incoming = await load({ trustServer: true, lotId: targetLotId });
+      const refreshedTournament =
+        incoming?.find((item) => item.id === selectedTournament.id) ??
+        incoming?.find((item) => item.id === selectedTournamentId) ??
+        incoming?.[0];
+      if (!refreshedTournament) {
+        setError("Action saved but tournament data could not be refreshed. Please reload the page.");
+        return;
+      }
+      const mergedTournament = mergeLatestBids(refreshedTournament);
+      const responseLiveLot = mergedTournament.lots.find((lot: Lot) => lot.status === "LIVE") ?? null;
+      const categoryLots = actionCategory ? mergedTournament.lots.filter((lot) => lot.category === actionCategory) : [];
+      const categoryOpen = categoryLots.some((lot) => ["LIVE", "QUEUED", "SKIPPED"].includes(lot.status));
+      const completedCategory = responseLiveLot || !actionCategory || categoryOpen ? null : actionCategory;
+      setTournaments((current) => current.map((tournament) => (tournament.id === mergedTournament.id ? mergedTournament : tournament)));
+      publishInstantDisplay(
+        mergedTournament,
+        responseLiveLot,
+        realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
+        completedCategory,
+        data.saleEvents ?? [],
+        false,
+        data.transitionId ?? transitionId
+      );
+      if (payload.action === "sold") {
+        const saleEvent = data.saleEvents?.[0];
+        setStatusMessage(
+          saleEvent
+            ? `Sold confirmed: ${saleEvent.playerName} to ${saleEvent.teamName} for ${formatPoints(saleEvent.amount)} pts.`
+            : "Sold confirmed."
+        );
+      }
+      if (payload.action === "owner") {
+        const targetLot = mergedTournament.lots.find((lot) => lot.id === targetLotId);
+        const team = mergedTournament.teams.find((item) => item.id === payload.teamId);
+        setStatusMessage(
+          targetLot && team
+            ? `Owner confirmed: ${targetLot.player.name} reserved for ${team.name}.`
+            : "Owner player confirmed."
+        );
       }
       return;
     }

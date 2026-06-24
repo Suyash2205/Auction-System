@@ -22,6 +22,14 @@ function getPooledDatabaseUrl() {
       parsed.searchParams.set("connection_limit", "1");
     }
 
+    if (!parsed.searchParams.has("pool_timeout")) {
+      parsed.searchParams.set("pool_timeout", "30");
+    }
+
+    if (!parsed.searchParams.has("connect_timeout")) {
+      parsed.searchParams.set("connect_timeout", "15");
+    }
+
     return parsed.toString();
   } catch {
     return url;

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { writeAuditLog } from "@/lib/audit-log";
-import { getActiveTournament } from "@/lib/auction-db";
 import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
 import { prisma, prismaTransactionOptions } from "@/lib/prisma";
 
@@ -113,24 +112,6 @@ async function finalizeOwnerLots(tournamentId: string, category: BudgetLot["cate
   return saleEvents;
 }
 
-async function getOwnerTeamIds(tournamentId: string) {
-  const ownerLogs = await prisma.auditLog.findMany({
-    where: { tournamentId, action: "OWNER_RESERVED" },
-    select: { details: true }
-  });
-
-  return [
-    ...new Set(
-      ownerLogs
-        .map((log) => (typeof log.details === "object" && log.details && "teamId" in log.details ? String(log.details.teamId) : ""))
-        .filter(Boolean)
-    )
-  ];
-}
-
-export const dynamic = "force-dynamic";
-export const maxDuration = 30;
-
 async function findLatestBid(lotId: string, expectedAmount?: number) {
   const deadline = Date.now() + (expectedAmount ? 2500 : 5000);
 
@@ -163,15 +144,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const lot = await prisma.auctionLot.findUnique({
     where: { id: lotId },
-    include: { bids: { orderBy: { createdAt: "asc" } } }
+    include: {
+      player: true,
+      bids: { orderBy: { createdAt: "asc" }, include: { team: true } }
+    }
   });
-  const tournamentConfig = await prisma.tournament.findUnique({ where: { id } });
 
-  if (!lot || lot.tournamentId !== id || !tournamentConfig) {
+  if (!lot || lot.tournamentId !== id) {
     return NextResponse.json({ error: "Lot not found." }, { status: 404 });
   }
 
-  await writeAuditLog({
+  const tournamentConfig = action === "bid" ? await prisma.tournament.findUnique({ where: { id } }) : null;
+
+  if (action === "bid" && !tournamentConfig) {
+    return NextResponse.json({ error: "Tournament not found." }, { status: 404 });
+  }
+
+  void writeAuditLog({
     action: "DISPLAY_TRANSITION",
     entityType: "AuctionTransition",
     entityId: transitionId,
@@ -254,6 +243,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   if (action === "bid") {
+    if (!tournamentConfig) {
+      return NextResponse.json({ error: "Tournament not found." }, { status: 404 });
+    }
+
     if (["SOLD", "UNSOLD"].includes(lot.status)) {
       return NextResponse.json({ error: "This player is already closed. Re-auction first if needed." }, { status: 400 });
     }
@@ -453,15 +446,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const nextOpenLot = findNextOpenLot(categoryLots, lotId);
-    const soldTeam = await prisma.team.findUnique({ where: { id: latestBid.teamId } });
-    const soldPlayer = await prisma.player.findUnique({ where: { id: lot.playerId } });
     saleEvents.push({
       id: `${lotId}-${latestBid.amount}`,
-      playerName: soldPlayer?.name ?? "Player",
-      playerPhotoUrl: soldPlayer?.photoUrl ?? null,
+      playerName: lot.player.name,
+      playerPhotoUrl: lot.player.photoUrl,
       category: lot.category,
-      teamName: soldTeam?.name ?? "Team",
-      teamColor: soldTeam?.color ?? null,
+      teamName: latestBid.team.name,
+      teamColor: latestBid.team.color,
       amount: latestBid.amount,
       kind: "sold"
     });
@@ -562,19 +553,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
   }
 
-  let tournament = null;
-  try {
-    tournament = await getActiveTournament(id);
-  } catch (loadError) {
-    console.error("Tournament refresh failed after auction action", loadError);
-  }
-
-  const ownerTeamIds = tournament ? await getOwnerTeamIds(id).catch(() => []) : [];
-  return NextResponse.json({
-    transitionId,
-    tournament: tournament ? { ...tournament, ownerTeamIds } : tournament,
-    saleEvents
-  });
+  return NextResponse.json({ transitionId, saleEvents });
   } catch (error) {
     console.error("Auction action failed", error);
     return NextResponse.json(

@@ -174,7 +174,7 @@ export function LiveDisplay() {
   useEffect(() => {
     load();
 
-    const interval = window.setInterval(load, 2000);
+    const interval = window.setInterval(load, 4000);
     const applyInstantState = (value: unknown, source = "display-instant") => {
       const data = value as { transitionId?: string; mode?: DisplayMode; sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[]; auctionEnded?: boolean };
 
@@ -236,12 +236,6 @@ export function LiveDisplay() {
       })
       .on("broadcast", { event: SUPABASE_BROADCAST_EVENT }, ({ payload }) => applyInstantState(payload, "display-supabase-broadcast"))
       .subscribe();
-    const supabaseChannel = supabase
-      ?.channel("live-auction-display")
-      .on("postgres_changes", { event: "*", schema: "public", table: "AuctionLot" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "Bid" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "Team" }, load)
-      .subscribe();
 
     return () => {
       window.clearInterval(interval);
@@ -249,9 +243,6 @@ export function LiveDisplay() {
       window.removeEventListener("storage", storageListener);
       if (supabaseBroadcastChannel) {
         supabase?.removeChannel(supabaseBroadcastChannel);
-      }
-      if (supabaseChannel) {
-        supabase?.removeChannel(supabaseChannel);
       }
     };
   }, [load, guardLiveLot, queueSaleEvents]);
