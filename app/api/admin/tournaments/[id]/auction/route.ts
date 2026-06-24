@@ -147,7 +147,7 @@ async function withSerializableRetry<T>(operation: () => Promise<T>, attempts = 
 }
 
 async function findLatestBid(lotId: string, expectedAmount?: number) {
-  const deadline = Date.now() + 1500;
+  const deadline = Date.now() + 5000;
 
   while (true) {
     const latestBid = await prisma.bid.findFirst({
@@ -158,7 +158,7 @@ async function findLatestBid(lotId: string, expectedAmount?: number) {
 
     if (!expectedAmount || (latestBid?.amount ?? 0) >= expectedAmount) return latestBid;
     if (Date.now() >= deadline) return latestBid;
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 }
 

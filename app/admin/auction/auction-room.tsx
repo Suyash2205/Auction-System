@@ -426,7 +426,9 @@ export function AuctionRoom() {
       player: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? null,
       amount: typeof payload.amount === "number" ? payload.amount : null
     });
-    applyOptimisticAction(payload, targetLotId);
+    if (!["sold", "owner"].includes(String(payload.action ?? ""))) {
+      applyOptimisticAction(payload, targetLotId);
+    }
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
