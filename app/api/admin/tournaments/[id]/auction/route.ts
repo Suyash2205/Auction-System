@@ -128,8 +128,11 @@ async function getOwnerTeamIds(tournamentId: string) {
   ];
 }
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 async function findLatestBid(lotId: string, expectedAmount?: number) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + (expectedAmount ? 2500 : 5000);
 
   while (true) {
     const latestBid = await prisma.bid.findFirst({
@@ -145,6 +148,7 @@ async function findLatestBid(lotId: string, expectedAmount?: number) {
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
   const { id } = await context.params;
   const body = await request.json();
   const action = String(body.action ?? "");
@@ -564,4 +568,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const tournament = await getActiveTournament(id);
   return NextResponse.json({ transitionId, tournament: tournament ? { ...tournament, ownerTeamIds: await getOwnerTeamIds(id) } : tournament, saleEvents });
+  } catch (error) {
+    console.error("Auction action failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Auction action failed." },
+      { status: 500 }
+    );
+  }
 }

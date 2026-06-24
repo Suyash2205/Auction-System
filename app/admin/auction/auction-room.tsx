@@ -76,6 +76,10 @@ const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
 const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
 const SUPABASE_BROADCAST_EVENT = "state";
 
+async function readJson(response: Response) {
+  return response.json().catch(() => ({}));
+}
+
 function getNextOpenLot(lots: Lot[], currentLotId: string) {
   const queuedLots = lots.filter((lot) => lot.status === "QUEUED" && lot.id !== currentLotId);
   const skippedLots = lots.filter((lot) => lot.status === "SKIPPED" && lot.id !== currentLotId);
@@ -238,16 +242,25 @@ export function AuctionRoom() {
   }
 
   async function load(options?: { trustServer?: boolean; lotId?: string }) {
-    const response = await fetch("/api/admin/tournaments");
-    const data = await response.json();
-    if (options?.trustServer && options.lotId) {
-      delete latestBidByLotRef.current[options.lotId];
+    try {
+      const response = await fetch("/api/admin/tournaments");
+      const data = await readJson(response);
+      if (!response.ok) {
+        setError(typeof data.error === "string" ? data.error : "Could not refresh auction data.");
+        return;
+      }
+      if (options?.trustServer && options.lotId) {
+        delete latestBidByLotRef.current[options.lotId];
+      }
+      const incoming = (data.tournaments ?? []) as Tournament[];
+      if (!incoming.length) return;
+      setTournaments(options?.trustServer ? incoming : incoming.map((tournament) => mergeLatestBids(tournament)));
+      setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
+      setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
+      setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
+    } catch {
+      setError("Could not refresh auction data. Please try again.");
     }
-    const incoming = (data.tournaments ?? []) as Tournament[];
-    setTournaments(options?.trustServer ? incoming : incoming.map((tournament) => mergeLatestBids(tournament)));
-    setSelectedTournamentId((current) => current || data.tournaments?.[0]?.id || "");
-    setCustomTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
-    setOwnerTeamId((current) => current || data.tournaments?.[0]?.teams?.[0]?.id || "");
   }
 
   useEffect(() => {
@@ -464,7 +477,7 @@ export function AuctionRoom() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, transitionId, ...payload })
       });
-      data = await response.json();
+      data = await readJson(response);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Auction action failed.");
       await load({ trustServer: true, lotId: targetLotId });
@@ -492,6 +505,11 @@ export function AuctionRoom() {
       });
       setError(data.error ?? "Auction action failed.");
       setStatusMessage("");
+      await load({ trustServer: true, lotId: targetLotId });
+      return;
+    }
+    if (!data.tournament) {
+      setError("Auction action finished without tournament data. Refreshing...");
       await load({ trustServer: true, lotId: targetLotId });
       return;
     }
