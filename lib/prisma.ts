@@ -3,11 +3,11 @@ import { PrismaClient } from "@prisma/client";
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function getPooledDatabaseUrl() {
-  const url = process.env.DATABASE_URL;
-  if (!url) return undefined;
+  const rawUrl = process.env.DATABASE_URL?.trim() || process.env.DIRECT_URL?.trim();
+  if (!rawUrl) return undefined;
 
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(rawUrl);
 
     // Supabase session pooler (5432) exhausts quickly on serverless — use transaction pooler.
     if (parsed.hostname.includes("pooler.supabase.com") && (parsed.port === "5432" || parsed.port === "")) {
@@ -32,8 +32,12 @@ function getPooledDatabaseUrl() {
 
     return parsed.toString();
   } catch {
-    return url;
+    return rawUrl;
   }
+}
+
+export function hasDatabaseUrl() {
+  return Boolean(process.env.DATABASE_URL?.trim() || process.env.DIRECT_URL?.trim());
 }
 
 const databaseUrl = getPooledDatabaseUrl();

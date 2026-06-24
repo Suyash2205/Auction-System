@@ -7,12 +7,17 @@
   },
   "scripts": {
     "dev": "next dev",
+    "dev:local": "vercel dev --listen 3000",
+    "sync:env": "vercel env pull .env.local --environment=production --yes",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "seed:lpl4": "npx tsx scripts/seed-lpl4-tournament.ts",
+    "seed:lpl4:direct": "npx tsx scripts/seed-lpl4-direct.ts",
+    "seed:lpl4:remote": "node scripts/seed-lpl4-remote.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.10.1",

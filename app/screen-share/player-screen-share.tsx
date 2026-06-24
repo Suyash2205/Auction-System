@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, UserRound } from "lucide-react";
+import { ChevronLeft, UserRound } from "lucide-react";
 import { categoryOrder } from "@/lib/demo-data";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -45,8 +45,12 @@ export function PlayerScreenShare() {
   const [phase, setPhase] = useState<Phase>("select");
   const [selectedCategory, setSelectedCategory] = useState<PlayerCategory>("F1");
   const [activeCategory, setActiveCategory] = useState<PlayerCategory | null>(null);
-  const [queue, setQueue] = useState<ScreenSharePlayer[]>([]);
+  const [queueIds, setQueueIds] = useState<string[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
+  const [soldIds, setSoldIds] = useState<Set<string>>(() => new Set());
+  const [categoryTotal, setCategoryTotal] = useState(0);
+  const [lastClosedPlayerId, setLastClosedPlayerId] = useState<string | null>(null);
+  const [playerById, setPlayerById] = useState<Map<string, ScreenSharePlayer>>(() => new Map());
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -98,40 +102,93 @@ export function PlayerScreenShare() {
     (category: PlayerCategory) => {
       const categoryPlayers = players.filter((player) => player.category === category);
       if (!categoryPlayers.length) return;
+
+      const shuffled = shufflePlayers(categoryPlayers);
+      setPlayerById(new Map(shuffled.map((player) => [player.id, player])));
       setActiveCategory(category);
       setSelectedCategory(category);
-      setQueue(shufflePlayers(categoryPlayers));
+      setQueueIds(shuffled.map((player) => player.id));
       setQueueIndex(0);
+      setSoldIds(new Set());
+      setCategoryTotal(shuffled.length);
+      setLastClosedPlayerId(null);
       setPhase("live");
     },
     [players]
   );
 
-  const goNext = useCallback(() => {
-    if (phase !== "live" || !queue.length) return;
-    if (queueIndex < queue.length - 1) {
-      setQueueIndex((current) => current + 1);
-      return;
+  const finishIfComplete = useCallback(
+    (nextSoldIds: Set<string>, closedPlayerId: string) => {
+      if (nextSoldIds.size >= categoryTotal) {
+        setLastClosedPlayerId(closedPlayerId);
+        setPhase("done");
+        return true;
+      }
+      return false;
+    },
+    [categoryTotal]
+  );
+
+  const markSold = useCallback(() => {
+    if (phase !== "live" || !queueIds.length) return;
+
+    const currentId = queueIds[queueIndex];
+    if (!currentId || soldIds.has(currentId)) return;
+
+    const nextSoldIds = new Set(soldIds);
+    nextSoldIds.add(currentId);
+    setSoldIds(nextSoldIds);
+
+    const nextQueueIds = queueIds.filter((_, index) => index !== queueIndex);
+    setQueueIds(nextQueueIds);
+
+    if (finishIfComplete(nextSoldIds, currentId)) return;
+
+    if (!nextQueueIds.length) return;
+    if (queueIndex >= nextQueueIds.length) {
+      setQueueIndex(nextQueueIds.length - 1);
     }
-    setPhase("done");
-  }, [phase, queue.length, queueIndex]);
+  }, [phase, queueIds, queueIndex, soldIds, finishIfComplete]);
+
+  const markUnsold = useCallback(() => {
+    if (phase !== "live" || !queueIds.length) return;
+
+    const currentId = queueIds[queueIndex];
+    if (!currentId || soldIds.has(currentId)) return;
+
+    const nextQueueIds = [...queueIds.slice(0, queueIndex), ...queueIds.slice(queueIndex + 1), currentId];
+    setQueueIds(nextQueueIds);
+  }, [phase, queueIds, queueIndex, soldIds]);
 
   const goPrev = useCallback(() => {
-    if (phase === "done" && queue.length) {
+    if (phase === "done" && lastClosedPlayerId) {
+      setQueueIds([lastClosedPlayerId]);
+      setQueueIndex(0);
       setPhase("live");
-      setQueueIndex(queue.length - 1);
       return;
     }
     if (phase !== "live" || queueIndex <= 0) return;
     setQueueIndex((current) => current - 1);
-  }, [phase, queue.length, queueIndex]);
+  }, [phase, lastClosedPlayerId, queueIndex]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (phase !== "live" && phase !== "done") return;
-      if (event.key === "ArrowRight" || event.key === " ") {
+      if (phase !== "live") {
+        if (phase === "done" && event.key === "ArrowLeft") {
+          event.preventDefault();
+          goPrev();
+        }
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "s") {
         event.preventDefault();
-        goNext();
+        markSold();
+      }
+      if (key === "u") {
+        event.preventDefault();
+        markUnsold();
       }
       if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -141,10 +198,14 @@ export function PlayerScreenShare() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [goNext, goPrev, phase]);
+  }, [goPrev, markSold, markUnsold, phase]);
 
-  const current = phase === "live" ? queue[queueIndex] ?? null : null;
+  const currentId = phase === "live" ? queueIds[queueIndex] ?? null : null;
+  const current = currentId ? playerById.get(currentId) ?? null : null;
+  const currentAlreadySold = currentId ? soldIds.has(currentId) : false;
   const activeCategoryMeta = categoryOptions.find((item) => item.category === activeCategory) ?? null;
+  const soldCount = soldIds.size;
+  const remainingCount = queueIds.length;
 
   if (loading) {
     return (
@@ -170,14 +231,14 @@ export function PlayerScreenShare() {
         <header className="border-b border-white/10 pb-5">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-court-lime">Lush Pickleball League 4</p>
           <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Player Screen Share</h1>
-          <p className="mt-1 text-sm text-white/60">Pick a category · players appear in random order</p>
+          <p className="mt-1 text-sm text-white/60">Pick a category · mark each player sold or unsold</p>
         </header>
 
         {phase === "select" ? (
           <main className="my-10 flex flex-1 flex-col items-center justify-center">
             <section className="w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-8 text-center shadow-2xl backdrop-blur">
               <h2 className="text-2xl font-bold">Select category to start</h2>
-              <p className="mt-2 text-sm text-white/60">Players will be shown one by one in random order.</p>
+              <p className="mt-2 text-sm text-white/60">Players appear in random order. Unsold players return at the end until sold.</p>
               <label className="mt-8 block text-left text-sm font-semibold text-white/70">
                 Category
                 <select
@@ -207,11 +268,9 @@ export function PlayerScreenShare() {
           <main className="my-10 flex flex-1 flex-col items-center justify-center">
             <section className="w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-8 text-center shadow-2xl backdrop-blur">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-lime">Category completed</p>
-              <h2 className="mt-3 text-3xl font-black">
-                {activeCategory} finished
-              </h2>
+              <h2 className="mt-3 text-3xl font-black">{activeCategory} finished</h2>
               <p className="mt-2 text-white/65">
-                All {queue.length} players in {activeCategoryMeta?.label ?? activeCategory} have been shown.
+                All {categoryTotal} players in {activeCategoryMeta?.label ?? activeCategory} have been sold.
               </p>
               <label className="mt-8 block text-left text-sm font-semibold text-white/70">
                 Choose next category
@@ -251,7 +310,7 @@ export function PlayerScreenShare() {
               <p className="text-sm text-white/70">
                 <span className="font-semibold text-white">{activeCategory}</span>
                 <span className="mx-2 text-white/30">·</span>
-                Player {queueIndex + 1} of {queue.length}
+                {soldCount} sold · {remainingCount} left in queue
                 <span className="mx-2 text-white/30">·</span>
                 random order
               </p>
@@ -284,6 +343,9 @@ export function PlayerScreenShare() {
                     {current.isOwner ? (
                       <span className="rounded-md bg-white/90 px-4 py-2 text-sm font-black text-court-ink">Owner player</span>
                     ) : null}
+                    {currentAlreadySold ? (
+                      <span className="rounded-md bg-court-green px-4 py-2 text-sm font-black text-white">Sold</span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -307,33 +369,36 @@ export function PlayerScreenShare() {
 
             <footer className="mt-auto border-t border-white/10 pt-5">
               <div className="flex flex-col items-center gap-3">
-                <div className="flex w-full max-w-xl flex-col gap-3 sm:flex-row sm:justify-center">
+                <div className="flex w-full max-w-3xl flex-col gap-3 sm:flex-row sm:justify-center">
                   <button
                     type="button"
                     onClick={goPrev}
                     disabled={queueIndex === 0}
-                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-8 text-base font-bold disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[220px] sm:flex-none"
+                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-6 text-base font-bold disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[180px] sm:flex-none"
                   >
                     <ChevronLeft size={22} /> Previous
                   </button>
                   <button
                     type="button"
-                    onClick={goNext}
-                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-court-lime px-8 text-base font-black text-court-ink sm:max-w-[220px] sm:flex-none"
+                    onClick={markUnsold}
+                    disabled={currentAlreadySold}
+                    className="inline-flex h-14 flex-1 items-center justify-center rounded-xl bg-court-clay px-6 text-base font-black text-white disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[200px] sm:flex-none"
                   >
-                    {queueIndex >= queue.length - 1 ? (
-                      "Finish category"
-                    ) : (
-                      <>
-                        Next player <ChevronRight size={22} />
-                      </>
-                    )}
+                    Unsold
+                  </button>
+                  <button
+                    type="button"
+                    onClick={markSold}
+                    disabled={currentAlreadySold}
+                    className="inline-flex h-14 flex-1 items-center justify-center rounded-xl bg-court-green px-6 text-base font-black text-white disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[200px] sm:flex-none"
+                  >
+                    Sold
                   </button>
                 </div>
                 <p className="text-center text-sm text-white/55">
                   <kbd className="rounded bg-white/10 px-2 py-1">←</kbd> previous ·{" "}
-                  <kbd className="rounded bg-white/10 px-2 py-1">→</kbd> or{" "}
-                  <kbd className="rounded bg-white/10 px-2 py-1">space</kbd> next
+                  <kbd className="rounded bg-white/10 px-2 py-1">U</kbd> unsold ·{" "}
+                  <kbd className="rounded bg-white/10 px-2 py-1">S</kbd> sold
                 </p>
               </div>
             </footer>
