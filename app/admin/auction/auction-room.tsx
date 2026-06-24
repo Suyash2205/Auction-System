@@ -3,9 +3,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Download, Gavel, RotateCcw, SkipForward, Trophy } from "lucide-react";
+import { TransitionDebugPanel } from "@/components/transition-debug-panel";
 import { categoryConfig, categoryOrder, formatPoints } from "@/lib/demo-data";
 import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
 import { supabase } from "@/lib/supabase";
+import { appendTransitionDebug, makeTransitionId } from "@/lib/transition-debug";
 import type { PlayerCategory } from "@/lib/types";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -67,6 +69,8 @@ type SaleEvent = {
   kind: "sold" | "owner";
 };
 
+type DisplayMode = "WAITING" | "LIVE_PLAYER" | "SOLD_ANIMATION" | "OWNER_ANIMATION" | "CATEGORY_COMPLETED" | "AUCTION_ENDED";
+
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
 const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
 const SUPABASE_BROADCAST_CHANNEL = "auction-display-broadcast";
@@ -86,9 +90,23 @@ function publishInstantDisplay(
   realtimeChannel: RealtimeChannel | null,
   completedCategory: PlayerCategory | null = null,
   saleEvents: SaleEvent[] = [],
-  auctionEnded = false
+  auctionEnded = false,
+  transitionId = makeTransitionId("display", liveLot?.id ?? completedCategory)
 ) {
+  const mode: DisplayMode = auctionEnded
+    ? "AUCTION_ENDED"
+    : saleEvents[0]?.kind === "owner"
+      ? "OWNER_ANIMATION"
+      : saleEvents.length
+        ? "SOLD_ANIMATION"
+        : liveLot
+          ? "LIVE_PLAYER"
+          : completedCategory
+            ? "CATEGORY_COMPLETED"
+            : "WAITING";
   const payload = {
+    transitionId,
+    mode,
     sentAt: Date.now(),
     tournament: {
       name: tournament.name,
@@ -107,6 +125,18 @@ function publishInstantDisplay(
     saleEvents,
     auctionEnded
   };
+
+  appendTransitionDebug({
+    id: transitionId,
+    source: "admin-publish",
+    mode,
+    tournament: tournament.name,
+    category: liveLot?.category ?? completedCategory,
+    lotId: liveLot?.id ?? null,
+    player: liveLot?.player.name ?? saleEvents[0]?.playerName ?? null,
+    amount: saleEvents[0]?.amount ?? liveLot?.bids.at(-1)?.amount ?? null,
+    note: saleEvents.length ? `saleEvents=${saleEvents.map((event) => event.id).join(",")}` : undefined
+  });
 
   try {
     window.localStorage.setItem(INSTANT_DISPLAY_KEY, JSON.stringify({ ...payload, saleEvents: [] }));
@@ -379,19 +409,39 @@ export function AuctionRoom() {
 
   async function action(payload: Record<string, unknown>, targetLotId = currentLot?.id, actionCategory = selectedCategory) {
     if (!selectedTournament || !targetLotId) return;
+    const transitionId = makeTransitionId(String(payload.action ?? "action"), targetLotId);
     const requestId = latestActionRequestRef.current + 1;
     latestActionRequestRef.current = requestId;
     setError("");
+    appendTransitionDebug({
+      id: transitionId,
+      source: "admin-click",
+      action: String(payload.action ?? ""),
+      tournament: selectedTournament.name,
+      category: actionCategory,
+      lotId: targetLotId,
+      player: selectedTournament.lots.find((lot) => lot.id === targetLotId)?.player.name ?? null,
+      amount: typeof payload.amount === "number" ? payload.amount : null
+    });
     applyOptimisticAction(payload, targetLotId);
     const response = await fetch(`/api/admin/tournaments/${selectedTournament.id}/auction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, ...payload })
+      body: JSON.stringify({ lotId: targetLotId, currentCategory: actionCategory, transitionId, ...payload })
     });
     const data = await response.json();
     if (requestId !== latestActionRequestRef.current) return;
 
     if (!response.ok) {
+      appendTransitionDebug({
+        id: transitionId,
+        source: "admin-error",
+        action: String(payload.action ?? ""),
+        tournament: selectedTournament.name,
+        category: actionCategory,
+        lotId: targetLotId,
+        note: data.error ?? "Auction action failed."
+      });
       setError(data.error ?? "Auction action failed.");
       await load();
       return;
@@ -408,7 +458,9 @@ export function AuctionRoom() {
         responseLiveLot,
         realtimeReadyRef.current ? realtimeBroadcastRef.current : null,
         responseLiveLot ? null : actionCategory,
-        data.saleEvents ?? []
+        data.saleEvents ?? [],
+        false,
+        data.transitionId ?? transitionId
       );
     }
   }
@@ -494,7 +546,7 @@ export function AuctionRoom() {
     }
     if (data.tournament) {
       setTournaments((current) => current.map((tournament) => (tournament.id === data.tournament.id ? data.tournament : tournament)));
-      publishInstantDisplay(data.tournament, null, realtimeReadyRef.current ? realtimeBroadcastRef.current : null, null, [], true);
+      publishInstantDisplay(data.tournament, null, realtimeReadyRef.current ? realtimeBroadcastRef.current : null, null, [], true, makeTransitionId("end-auction", selectedTournament.id));
     }
   }
 
@@ -543,6 +595,7 @@ export function AuctionRoom() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+      <TransitionDebugPanel label="Admin" />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-court-green">Live control room</p>

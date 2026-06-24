@@ -3,9 +3,11 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Gavel, ShieldCheck } from "lucide-react";
+import { TransitionDebugPanel } from "@/components/transition-debug-panel";
 import { categoryConfig, formatPoints } from "@/lib/demo-data";
 import { getMaxAllowedBid } from "@/lib/auction-rules";
 import { supabase } from "@/lib/supabase";
+import { appendTransitionDebug } from "@/lib/transition-debug";
 import type { PlayerCategory } from "@/lib/types";
 
 type Team = {
@@ -55,6 +57,8 @@ type SaleEvent = {
   amount: number;
   kind: "sold" | "owner";
 };
+
+type DisplayMode = "WAITING" | "LIVE_PLAYER" | "SOLD_ANIMATION" | "OWNER_ANIMATION" | "CATEGORY_COMPLETED" | "AUCTION_ENDED";
 
 const INSTANT_DISPLAY_KEY = "lush-pickleball-instant-display";
 const INSTANT_DISPLAY_CHANNEL = "lush-pickleball-display";
@@ -126,6 +130,16 @@ export function LiveDisplay() {
       setLot(guardLiveLot(data.liveLot));
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
+      appendTransitionDebug({
+        id: data.transitionId ?? `poll-${Date.now()}`,
+        source: "display-poll",
+        mode: data.auctionEnded ? "AUCTION_ENDED" : data.liveLot ? "LIVE_PLAYER" : data.completedCategory ? "CATEGORY_COMPLETED" : "WAITING",
+        tournament: data.tournament?.name,
+        category: data.liveLot?.category ?? data.completedCategory ?? null,
+        lotId: data.liveLot?.id ?? null,
+        player: data.liveLot?.player?.name ?? null,
+        amount: data.liveLot?.bids?.at(-1)?.amount ?? null
+      });
     } finally {
       isLoadingRef.current = false;
     }
@@ -135,8 +149,8 @@ export function LiveDisplay() {
     load();
 
     const interval = window.setInterval(load, 500);
-    const applyInstantState = (value: unknown) => {
-      const data = value as { sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[]; auctionEnded?: boolean };
+    const applyInstantState = (value: unknown, source = "display-instant") => {
+      const data = value as { transitionId?: string; mode?: DisplayMode; sentAt?: number; tournament?: Tournament | null; liveLot?: Lot | null; completedCategory?: PlayerCategory | null; saleEvents?: SaleEvent[]; auctionEnded?: boolean };
 
       if (!data?.sentAt || Date.now() - data.sentAt > MAX_INSTANT_STATE_AGE_MS) return;
 
@@ -146,22 +160,33 @@ export function LiveDisplay() {
       setCompletedCategory(data.liveLot ? null : data.completedCategory ?? null);
       setAuctionEnded(Boolean(data.auctionEnded));
       queueSaleEvents(data.saleEvents ?? []);
+      appendTransitionDebug({
+        id: data.transitionId ?? `instant-${Date.now()}`,
+        source,
+        mode: data.mode ?? (data.auctionEnded ? "AUCTION_ENDED" : data.liveLot ? "LIVE_PLAYER" : data.completedCategory ? "CATEGORY_COMPLETED" : "WAITING"),
+        tournament: data.tournament?.name,
+        category: data.liveLot?.category ?? data.completedCategory ?? null,
+        lotId: data.liveLot?.id ?? null,
+        player: data.liveLot?.player?.name ?? data.saleEvents?.[0]?.playerName ?? null,
+        amount: data.saleEvents?.[0]?.amount ?? data.liveLot?.bids?.at(-1)?.amount ?? null,
+        note: data.saleEvents?.length ? `saleEvents=${data.saleEvents.map((event) => event.id).join(",")}` : undefined
+      });
     };
 
     try {
       const cached = window.localStorage.getItem(INSTANT_DISPLAY_KEY);
-      if (cached) applyInstantState({ ...JSON.parse(cached), saleEvents: [] });
+      if (cached) applyInstantState({ ...JSON.parse(cached), saleEvents: [] }, "display-cache");
     } catch {
       // Ignore malformed stale instant display state.
     }
 
     const instantChannel = new BroadcastChannel(INSTANT_DISPLAY_CHANNEL);
-    instantChannel.onmessage = (event) => applyInstantState(event.data);
+    instantChannel.onmessage = (event) => applyInstantState(event.data, "display-broadcast-channel");
 
     const storageListener = (event: StorageEvent) => {
       if (event.key !== INSTANT_DISPLAY_KEY || !event.newValue) return;
       try {
-        applyInstantState({ ...JSON.parse(event.newValue), saleEvents: [] });
+        applyInstantState({ ...JSON.parse(event.newValue), saleEvents: [] }, "display-storage");
       } catch {
         // Ignore malformed storage payloads.
       }
@@ -172,7 +197,7 @@ export function LiveDisplay() {
       ?.channel(SUPABASE_BROADCAST_CHANNEL, {
         config: { broadcast: { self: false } }
       })
-      .on("broadcast", { event: SUPABASE_BROADCAST_EVENT }, ({ payload }) => applyInstantState(payload))
+      .on("broadcast", { event: SUPABASE_BROADCAST_EVENT }, ({ payload }) => applyInstantState(payload, "display-supabase-broadcast"))
       .subscribe();
     const supabaseChannel = supabase
       ?.channel("live-auction-display")
@@ -219,6 +244,7 @@ export function LiveDisplay() {
   if (!tournament) {
     return (
       <main className="grid min-h-screen place-items-center bg-court-ink text-white">
+        <TransitionDebugPanel label="Display" />
         <div className="text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
           <h1 className="mt-4 text-5xl font-black">Waiting for tournament</h1>
@@ -230,6 +256,7 @@ export function LiveDisplay() {
   if (activeSale) {
     return (
       <main className="min-h-screen bg-court-ink text-white">
+        <TransitionDebugPanel label="Display" />
         <section className="court-grid grid min-h-screen grid-cols-1 items-center gap-8 px-8 py-8 lg:grid-cols-[0.8fr_1.2fr]">
           <div className="relative mx-auto aspect-[4/5] w-full max-w-md overflow-hidden rounded-lg border border-white/15 bg-white/10 shadow-glow">
             {activeSale.playerPhotoUrl ? (
@@ -261,6 +288,7 @@ export function LiveDisplay() {
   if (auctionEnded) {
     return (
       <main className="min-h-screen bg-court-ink text-white">
+        <TransitionDebugPanel label="Display" />
         <section className="court-grid min-h-screen px-6 py-8">
           <header className="mx-auto w-full max-w-7xl">
             <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Auction Completed</p>
@@ -302,6 +330,7 @@ export function LiveDisplay() {
   if (!lot) {
     return (
       <main className="grid min-h-screen place-items-center bg-court-ink text-white">
+        <TransitionDebugPanel label="Display" />
         <div className="text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-court-lime">Live Auction Display</p>
           <h1 className="mt-4 text-6xl font-black">
@@ -315,6 +344,7 @@ export function LiveDisplay() {
 
   return (
     <main className="min-h-screen bg-court-ink text-white">
+      <TransitionDebugPanel label="Display" />
       <section className="court-grid grid min-h-screen grid-rows-[auto_1fr_auto]">
         <header className="flex items-center justify-between gap-4 border-b border-white/15 px-6 py-4">
           <div className="flex items-center gap-3">

@@ -134,6 +134,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const action = String(body.action ?? "");
   const lotId = String(body.lotId ?? "");
   const currentCategory = String(body.currentCategory ?? "");
+  const transitionId = String(body.transitionId ?? `${action}-${lotId}-${Date.now()}`);
   let saleEvents: SaleEvent[] = [];
 
   if (!lotId) {
@@ -149,6 +150,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!lot || lot.tournamentId !== id || !tournamentConfig) {
     return NextResponse.json({ error: "Lot not found." }, { status: 404 });
   }
+
+  await writeAuditLog({
+    action: "DISPLAY_TRANSITION",
+    entityType: "AuctionTransition",
+    entityId: transitionId,
+    tournamentId: id,
+    summary: `Server received ${action}`,
+    details: {
+      transitionId,
+      source: "server-action",
+      action,
+      lotId,
+      currentCategory,
+      category: lot.category,
+      statusBefore: lot.status,
+      latestBidBefore: lot.bids.at(-1)?.amount ?? null
+    }
+  });
 
   const categoryLots = await prisma.auctionLot.findMany({
     where: { tournamentId: id, category: lot.category },
@@ -493,5 +512,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const tournament = await getActiveTournament(id);
-  return NextResponse.json({ tournament: tournament ? { ...tournament, ownerTeamIds: await getOwnerTeamIds(id) } : tournament, saleEvents });
+  return NextResponse.json({ transitionId, tournament: tournament ? { ...tournament, ownerTeamIds: await getOwnerTeamIds(id) } : tournament, saleEvents });
 }

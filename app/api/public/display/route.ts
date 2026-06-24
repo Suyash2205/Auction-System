@@ -22,9 +22,14 @@ export async function GET() {
     : tournament.lots
         .filter((lot) => !["QUEUED", "LIVE", "SKIPPED"].includes(lot.status))
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0]?.category ?? null;
+  const latestTransition = await prisma.auditLog.findFirst({
+    where: { tournamentId: tournament.id, action: "DISPLAY_TRANSITION" },
+    orderBy: { createdAt: "desc" },
+    select: { entityId: true }
+  });
 
   return NextResponse.json(
-    { tournament, liveLot: auctionEnded ? null : liveLot, completedCategory, auctionEnded },
+    { transitionId: latestTransition?.entityId ?? null, tournament, liveLot: auctionEnded ? null : liveLot, completedCategory, auctionEnded },
     { headers: { "cache-control": "no-store" } }
   );
 }
