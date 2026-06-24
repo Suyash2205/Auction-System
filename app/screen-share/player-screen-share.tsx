@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, UserRound } from "lucide-react";
+import { ChevronLeft, ChevronRight, UserRound } from "lucide-react";
 import { categoryOrder } from "@/lib/demo-data";
 import type { PlayerCategory } from "@/lib/types";
 
@@ -116,18 +116,32 @@ export function PlayerScreenShare() {
     setPhase("done");
   }, [phase, queue.length, queueIndex]);
 
+  const goPrev = useCallback(() => {
+    if (phase === "done" && queue.length) {
+      setPhase("live");
+      setQueueIndex(queue.length - 1);
+      return;
+    }
+    if (phase !== "live" || queueIndex <= 0) return;
+    setQueueIndex((current) => current - 1);
+  }, [phase, queue.length, queueIndex]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (phase !== "live") return;
+      if (phase !== "live" && phase !== "done") return;
       if (event.key === "ArrowRight" || event.key === " ") {
         event.preventDefault();
         goNext();
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goPrev();
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [goNext, phase]);
+  }, [goNext, goPrev, phase]);
 
   const current = phase === "live" ? queue[queueIndex] ?? null : null;
   const activeCategoryMeta = categoryOptions.find((item) => item.category === activeCategory) ?? null;
@@ -220,6 +234,13 @@ export function PlayerScreenShare() {
               >
                 Start {selectedCategory}
               </button>
+              <button
+                type="button"
+                onClick={goPrev}
+                className="mt-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-white/15 text-sm font-bold text-white/85"
+              >
+                <ChevronLeft size={18} /> Back to last player
+              </button>
             </section>
           </main>
         ) : null}
@@ -286,22 +307,34 @@ export function PlayerScreenShare() {
 
             <footer className="mt-auto border-t border-white/10 pt-5">
               <div className="flex flex-col items-center gap-3">
-                <button
-                  type="button"
-                  onClick={goNext}
-                  className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2 rounded-xl bg-court-lime px-10 text-base font-black text-court-ink"
-                >
-                  {queueIndex < queue.length - 1 ? (
-                    <>
-                      Next player <ChevronRight size={22} />
-                    </>
-                  ) : (
-                    "Finish category"
-                  )}
-                </button>
+                <div className="flex w-full max-w-xl flex-col gap-3 sm:flex-row sm:justify-center">
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    disabled={phase === "live" && queueIndex === 0}
+                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-8 text-base font-bold disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[220px] sm:flex-none"
+                  >
+                    <ChevronLeft size={22} /> Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goNext}
+                    disabled={phase === "done"}
+                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-court-lime px-8 text-base font-black text-court-ink disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[220px] sm:flex-none"
+                  >
+                    {phase === "done" || queueIndex >= queue.length - 1 ? (
+                      "Finish category"
+                    ) : (
+                      <>
+                        Next player <ChevronRight size={22} />
+                      </>
+                    )}
+                  </button>
+                </div>
                 <p className="text-center text-sm text-white/55">
-                  Press <kbd className="rounded bg-white/10 px-2 py-1">space</kbd> or{" "}
-                  <kbd className="rounded bg-white/10 px-2 py-1">→</kbd> for next
+                  <kbd className="rounded bg-white/10 px-2 py-1">←</kbd> previous ·{" "}
+                  <kbd className="rounded bg-white/10 px-2 py-1">→</kbd> or{" "}
+                  <kbd className="rounded bg-white/10 px-2 py-1">space</kbd> next
                 </p>
               </div>
             </footer>
