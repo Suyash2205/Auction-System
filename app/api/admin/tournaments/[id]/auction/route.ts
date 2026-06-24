@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/lib/audit-log";
 import { getActiveTournament } from "@/lib/auction-db";
 import { canTeamBidInCategory, getMaxAllowedBid, getRequiredReserve } from "@/lib/auction-rules";
@@ -128,6 +129,39 @@ async function getOwnerTeamIds(tournamentId: string) {
   ];
 }
 
+async function withSerializableRetry<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (
+      attempts > 1 &&
+      typeof error === "object" &&
+      error &&
+      "code" in error &&
+      (error as { code?: string }).code === "P2034"
+    ) {
+      return withSerializableRetry(operation, attempts - 1);
+    }
+    throw error;
+  }
+}
+
+async function findLatestBid(lotId: string, expectedAmount?: number) {
+  const deadline = Date.now() + 1500;
+
+  while (true) {
+    const latestBid = await prisma.bid.findFirst({
+      where: { lotId },
+      include: { team: true },
+      orderBy: { createdAt: "desc" }
+    });
+
+    if (!expectedAmount || (latestBid?.amount ?? 0) >= expectedAmount) return latestBid;
+    if (Date.now() >= deadline) return latestBid;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
@@ -234,75 +268,100 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   if (action === "bid") {
-    if (["SOLD", "UNSOLD"].includes(lot.status)) {
-      return NextResponse.json({ error: "This player is already closed. Re-auction first if needed." }, { status: 400 });
-    }
-
     const teamId = String(body.teamId ?? "");
     const amount = Number(body.amount);
-    const latestBid = lot.bids.at(-1);
-    const minimumBid = Math.max(lot.basePrice, (latestBid?.amount ?? lot.basePrice - tournamentConfig.bidIncrement) + tournamentConfig.bidIncrement);
 
-    if (!teamId || !Number.isFinite(amount) || amount < minimumBid) {
-      return NextResponse.json({ error: `Bid must be at least ${minimumBid}.` }, { status: 400 });
+    let teamName = "";
+    const bidResult = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const freshLot = await tx.auctionLot.findUnique({
+            where: { id: lotId },
+            include: { bids: { orderBy: { createdAt: "asc" } } }
+          });
+          const freshBudgetLots: BudgetLot[] = await tx.auctionLot.findMany({
+            where: { tournamentId: id },
+            select: { category: true, status: true, soldToTeamId: true }
+          });
+
+          if (!freshLot || freshLot.tournamentId !== id) {
+            return { error: "Lot not found.", status: 404 };
+          }
+          if (["SOLD", "UNSOLD"].includes(freshLot.status)) {
+            return { error: "This player is already closed. Re-auction first if needed.", status: 400 };
+          }
+
+          const latestBid = freshLot.bids.at(-1);
+          const minimumBid = Math.max(
+            freshLot.basePrice,
+            (latestBid?.amount ?? freshLot.basePrice - tournamentConfig.bidIncrement) + tournamentConfig.bidIncrement
+          );
+
+          if (!teamId || !Number.isFinite(amount) || amount < minimumBid) {
+            return { error: `Bid must be at least ${minimumBid}.`, status: 400 };
+          }
+
+          const team = await tx.team.findUnique({ where: { id: teamId } });
+          if (!team || team.tournamentId !== id) {
+            return { error: "Team not found.", status: 404 };
+          }
+          teamName = team.name;
+
+          const existingOwner = await tx.auditLog.findFirst({
+            where: {
+              tournamentId: id,
+              action: "OWNER_RESERVED",
+              details: {
+                path: ["teamId"],
+                equals: teamId
+              }
+            }
+          });
+          if (existingOwner) {
+            return { error: `${team.name} already has an owner player.`, status: 400 };
+          }
+
+          if (amount > team.budget - team.spent) {
+            return { error: "Bid is higher than this team's remaining purse.", status: 400 };
+          }
+
+          if (!canTeamBidInCategory(freshBudgetLots, team.id, freshLot.category)) {
+            return { error: `${team.name} already has the required player count for ${freshLot.category}.`, status: 400 };
+          }
+
+          const maxAllowedBid = getMaxAllowedBid(team, freshBudgetLots, freshLot.category);
+          if (amount > maxAllowedBid) {
+            return { error: `${team.name} can bid up to ${maxAllowedBid}. Required category slots must stay reserved.`, status: 400 };
+          }
+
+          await tx.auctionLot.updateMany({
+            where: { tournamentId: id, status: "LIVE" },
+            data: { status: "QUEUED" }
+          });
+          await tx.auctionLot.update({
+            where: { id: lotId },
+            data: { status: "LIVE" }
+          });
+          await tx.bid.create({
+            data: { lotId, teamId, amount }
+          });
+
+          return { ok: true };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      )
+    );
+
+    if ("error" in bidResult) {
+      return NextResponse.json({ error: bidResult.error }, { status: bidResult.status });
     }
 
-    const team = await prisma.team.findUnique({ where: { id: teamId } });
-    if (!team || team.tournamentId !== id) {
-      return NextResponse.json({ error: "Team not found." }, { status: 404 });
-    }
-    const existingOwner = await prisma.auditLog.findFirst({
-      where: {
-        tournamentId: id,
-        action: "OWNER_RESERVED",
-        details: {
-          path: ["teamId"],
-          equals: teamId
-        }
-      }
-    });
-    if (existingOwner) {
-      return NextResponse.json({ error: `${team.name} already has an owner player.` }, { status: 400 });
-    }
-
-    if (amount > team.budget - team.spent) {
-      return NextResponse.json({ error: "Bid is higher than this team's remaining purse." }, { status: 400 });
-    }
-
-    if (!canTeamBidInCategory(budgetLots, team.id, lot.category)) {
-      return NextResponse.json(
-        { error: `${team.name} already has the required player count for ${lot.category}.` },
-        { status: 400 }
-      );
-    }
-
-    const maxAllowedBid = getMaxAllowedBid(team, budgetLots, lot.category);
-    if (amount > maxAllowedBid) {
-      return NextResponse.json(
-        { error: `${team.name} can bid up to ${maxAllowedBid}. Required category slots must stay reserved.` },
-        { status: 400 }
-      );
-    }
-
-    await prisma.$transaction([
-      prisma.auctionLot.updateMany({
-        where: { tournamentId: id, status: "LIVE" },
-        data: { status: "QUEUED" }
-      }),
-      prisma.auctionLot.update({
-        where: { id: lotId },
-        data: { status: "LIVE" }
-      }),
-      prisma.bid.create({
-        data: { lotId, teamId, amount }
-      })
-    ]);
     await writeAuditLog({
       action: "BID",
       entityType: "Bid",
       entityId: lotId,
       tournamentId: id,
-      summary: `${team.name} bid ${amount}`,
+      summary: `${teamName} bid ${amount}`,
       details: { lotId, teamId, amount }
     });
   }
@@ -392,9 +451,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "This player is already sold." }, { status: 400 });
     }
 
-    const latestBid = lot.bids.at(-1);
+    const expectedBidAmount = Number(body.expectedBidAmount ?? 0);
+    const latestBid = await findLatestBid(lotId, Number.isFinite(expectedBidAmount) ? expectedBidAmount : undefined);
     if (!latestBid) {
       return NextResponse.json({ error: "Cannot sell without a bid." }, { status: 400 });
+    }
+    if (expectedBidAmount && latestBid.amount < expectedBidAmount) {
+      return NextResponse.json({ error: `Latest bid is still ${latestBid.amount}. Wait for ${expectedBidAmount} to confirm before selling.` }, { status: 409 });
     }
 
     const nextOpenLot = findNextOpenLot(categoryLots, lotId);
