@@ -311,7 +311,7 @@ export function PlayerScreenShare() {
                   <button
                     type="button"
                     onClick={goPrev}
-                    disabled={phase === "live" && queueIndex === 0}
+                    disabled={queueIndex === 0}
                     className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-8 text-base font-bold disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[220px] sm:flex-none"
                   >
                     <ChevronLeft size={22} /> Previous
@@ -319,10 +319,9 @@ export function PlayerScreenShare() {
                   <button
                     type="button"
                     onClick={goNext}
-                    disabled={phase === "done"}
-                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-court-lime px-8 text-base font-black text-court-ink disabled:cursor-not-allowed disabled:opacity-35 sm:max-w-[220px] sm:flex-none"
+                    className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-court-lime px-8 text-base font-black text-court-ink sm:max-w-[220px] sm:flex-none"
                   >
-                    {phase === "done" || queueIndex >= queue.length - 1 ? (
+                    {queueIndex >= queue.length - 1 ? (
                       "Finish category"
                     ) : (
                       <>
